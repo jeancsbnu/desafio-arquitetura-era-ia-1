@@ -5,6 +5,27 @@ services:
     ports:
       - "8090:8090"
 
+  gateway:
+    image: ghcr.io/berriai/litellm:v1.102.1
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    # As chaves dos providers vivem só aqui.
+    env_file: .env
+    environment:
+      # Usa a tabela de modelos embutida na imagem, sem buscá-la na internet ao subir.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+    volumes:
+      - ./gateway/config.yaml:/app/config.yaml:ro
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    depends_on:
+      provider-fake:
+        condition: service_healthy
+
   edge:
     image: nginx:1.27-alpine
     ports:
@@ -17,7 +38,11 @@ services:
 
   app:
     build: ./app
+    # Piloto: só a F1 já vai pelo gateway; as outras features ainda usam as chaves do .env.
     env_file: .env
+    environment:
+      GATEWAY_URL: http://gateway:4000
+      GATEWAY_API_KEY: ${LITELLM_MASTER_KEY}
     volumes:
       - ./data:/data:ro
     healthcheck:
@@ -27,4 +52,6 @@ services:
       retries: 20
     depends_on:
       provider-fake:
+        condition: service_healthy
+      gateway:
         condition: service_healthy
