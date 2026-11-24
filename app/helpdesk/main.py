@@ -2,10 +2,14 @@ import os
 
 from fastapi import FastAPI
 
-from . import classification, extraction, report, suggestion
+from .classification import TicketClassifier
+from .extraction import OrderExtractor
 from .gateway import GatewayLanguageModel
+from .report import TopicsReporter
 from .schemas import (Classification, OrderData, PeriodInput, ReplySuggestion, TicketInput,
                       TopicsReport)
+from .suggestion import ReplySuggester
+from .tickets import JsonlTicketSource
 
 MAX_OUTPUT_TOKENS = 2000
 
@@ -15,7 +19,12 @@ language_model = GatewayLanguageModel(
     api_key=os.environ["GATEWAY_API_KEY"],
     max_output_tokens=MAX_OUTPUT_TOKENS,
 )
-classifier = classification.TicketClassifier(language_model)
+ticket_source = JsonlTicketSource(os.environ.get("TICKETS_FILE", "/data/tickets.jsonl"))
+
+classifier = TicketClassifier(language_model)
+suggester = ReplySuggester(language_model)
+extractor = OrderExtractor(language_model)
+reporter = TopicsReporter(language_model, ticket_source)
 
 app = FastAPI(title="Helpdesk")
 
@@ -32,14 +41,14 @@ def classify_ticket(ticket: TicketInput) -> Classification:
 
 @app.post("/tickets/reply-suggestion")
 def suggest_reply(ticket: TicketInput) -> ReplySuggestion:
-    return suggestion.suggest(ticket)
+    return suggester.suggest(ticket)
 
 
 @app.post("/tickets/extraction")
 def extract_order_data(ticket: TicketInput) -> OrderData:
-    return extraction.extract(ticket)
+    return extractor.extract(ticket)
 
 
 @app.post("/reports/topics")
 def topics_report(period: PeriodInput) -> TopicsReport:
-    return report.topics(period)
+    return reporter.topics(period)

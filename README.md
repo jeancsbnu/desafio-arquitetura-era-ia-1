@@ -8,6 +8,8 @@ _A preencher ao final (requisitos 4 a 7)._
 
 ## Diagnóstico da v1
 
+Os trechos de `app/` citados nesta seção são os da tag `v1-coupled` (`git show v1-coupled:app/helpdesk/llm.py`). Depois da refatoração, `llm.py` e `config.py` deixaram de existir.
+
 Ambiente: `cp .env.example .env && docker compose up -d --build --wait`, tudo medido pela borda (`localhost:8000`) e conferido em `GET localhost:8090/admin/calls`. Horários em UTC (o formato de `ts` no `/admin/calls`). Horários, IDs de container e custos são os desta execução e mudam a cada vez que o roteiro roda; o que precisa se repetir são os padrões: o `504` em 30 s, o número de tentativas por requisição, as chamadas que continuam depois do `504` e o container recriado. A Dor 1 e o bloco `openai` da Dor 3 rodaram ao mesmo tempo, cada um num provider, e por isso os horários se sobrepõem; o `/admin/calls` separa as chamadas por `provider` e `task`. As demais medições rodaram depois, uma de cada vez. Ticket de referência:
 
 ```sh
@@ -248,7 +250,21 @@ Leitura:
 - **As features** (`classification`, `extraction`, `suggestion` e `report`) têm I de 0,75 a 0,80 e D de 0,20 a 0,25. Ficam perto da Main Sequence, mas o problema delas aparece do outro lado da dependência: todas importam diretamente o `llm` e o `config` concretos.
 - **`main`** (I 1,00, D 0,00) é o ponto de composição. **`tickets`** (I 0,50, D 0,50) fica na fronteira da zona de dor, sem entrar nela.
 
-_v2-decoupled e main: a preencher (requisitos 4 e 6)._
+### v2-decoupled
+
+![Gráfico A × I da v2-decoupled](metrics/results/v2-decoupled.svg)
+
+Resultado em [metrics/results/v2-decoupled.csv](metrics/results/v2-decoupled.csv). O caminho até aqui (plano, piloto medido antes e depois, revisões e handoff para o agente) está em [docs/refactoring-plan.md](docs/refactoring-plan.md).
+
+Leitura, comparando com a v1:
+
+- **`llm` e `config` saíram do gráfico.** Os dois estavam na zona de dor (D 0,80 e 1,00) e concentravam SDK, credencial e nome de modelo. O nome do modelo e as chaves foram para o gateway. O que sobrou de configuração (URL e chave do gateway, caminho dos tickets) é lido em `main`, o ponto de composição.
+- **`ports` é o novo centro.** É o componente mais dependido (Ca 6: as 4 features e os 2 adaptadores) e é totalmente abstrato (2 `Protocol`s). Fica no canto estável-abstrato, sobre a Main Sequence (D 0,00): o que muitos usam é justamente o que não tem implementação para mudar.
+- **As features dependem só da porta e do contrato.** `classification`, `extraction`, `suggestion` e `report` têm Ce {`ports`, `schemas`}, I 0,67 e D 0,33. Na v1 tinham I de 0,75 a 0,80, mas dependiam de `llm` e `config` concretos.
+- **Os adaptadores são detalhes que dependem da abstração.** `gateway` (o único com SDK) e `tickets` declaram a porta que implementam e só `main` os importa: I 0,50, D 0,50, fora da zona de dor. Isso não estava no plano original: o piloto mostrou o adaptador na zona de dor quando ele implementava a porta só estruturalmente (Revisão 1 do plano).
+- **`schemas` continua na zona de dor** (D 1,00). São os tipos de valor do contrato HTTP, que só mudam quando o contrato muda. Vai ser declarado "estável por natureza" no ADR da métrica.
+
+_main: a preencher (requisito 6)._
 
 ## Tabela de capacidades
 

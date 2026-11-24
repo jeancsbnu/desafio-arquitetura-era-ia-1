@@ -108,4 +108,48 @@ Os itens 1 a 5 continuam valendo. Os itens 3 e 6 abaixo substituem ou completam 
 
 ## Handoff para o agente
 
-_A preencher na escala da refatoração._
+**Divisão do trabalho.** O plano, o piloto e as revisões foram feitos com o Claude Code (Claude Opus), conduzido por mim. A escala (F2, F3, F4, `tickets` e a remoção de `llm` e `config`) foi entregue a outro agente, um subagente Claude Sonnet sem acesso a esta conversa. Ele recebeu só o brief e o repositório. Assim, quem julga o resultado não é quem o produziu.
+
+**O que foi entregue ao agente.** O brief completo está em [handoff-brief.md](handoff-brief.md), com o texto exatamente como foi enviado. Ele continha:
+
+- o que ler (este plano já com as revisões, e o piloto como padrão a copiar);
+- as 7 mudanças, uma por componente, com o nome lógico de cada capacidade;
+- as restrições: comportamento externo igual, nada de mexer em `tests/`, `gateway/` e `metrics/`, nenhum nome físico nem chave em `app/`, Ce das features ⊆ {`ports`, `schemas`}, nenhuma dependência ou tratamento de erro novo;
+- a verificação que ele devia rodar e relatar.
+
+O brief não continha a métrica esperada nem as conclusões do piloto além do que está no plano.
+
+**O que voltou.** O agente relatou as mudanças, 30 testes passando e a tabela da métrica, sem desvio de design. Ele avisou de um incidente operacional: um pytest rodado em segundo plano pelo Bash travou, e ele o encerrou e repetiu a execução em primeiro plano. Avisou também do que não verificou: a comparação de `/admin/calls` com a v1 e o cenário de `error_500`.
+
+**Como o resultado foi julgado.** O relato do agente não foi usado como prova. Repeti cada item do critério de pronto revisado:
+
+| Critério | Verificação independente | Resultado |
+|---|---|---|
+| 1. Comportamento | rebuild + `python -m pytest tests/characterization`; `git diff v1-coupled -- tests/characterization/` | 30 passaram; suíte sem diferença |
+| 2. Métrica | `python metrics/coupling.py app/helpdesk ...` | só `schemas` na zona de dor (ver tabela abaixo) |
+| 3. Direção das dependências | leitura do diff; `grep` por imports de SDK e de adaptadores | `openai` importado só em `gateway`; `gateway` e `tickets` importados só por `main`; cada adaptador declara sua porta; Ce de cada feature = {`ports`, `schemas`} |
+| 4. Gateway | `grep` por nomes físicos e chaves em `app/`; `docker compose exec app env`; `docker compose config` | greps vazios; o `app` recebe só `GATEWAY_URL` e `GATEWAY_API_KEY`, sem `env_file` |
+| 5. Prova no provider | `/admin/calls` depois da suíte | `classify` e `extract` em `openai/gpt-fake-large`, `suggest` e `topics` em `anthropic/claude-fake-large`, como na v1 |
+| 6. Tentativas | cada provider em `error_500`, uma requisição por feature | 3 chamadas por requisição nas 4 features, `500` em ~4,7 s |
+
+Li também o diff das 4 features contra a v1. Prompts, validações (`422` e `502`), lotes de 150, soma por tema, corte em 3 exemplos e ordenação ficaram iguais. A única mudança é de onde vêm o modelo e os tickets.
+
+**Aceito ou rejeitado.** Nesta rodada, nada do que o agente produziu precisou ser rejeitado. A rejeição que houve no processo foi do próprio piloto: a métrica reprovou o adaptador implementado só estruturalmente (Revisão 1), e a contagem de chamadas no `/admin/calls` reprovou os retries do SDK (Revisão 2). As duas correções entraram no plano antes do handoff, e por isso o agente já recebeu o padrão corrigido.
+
+## Resultado: v2-decoupled
+
+Medição com o mesmo script ([CSV](../metrics/results/v2-decoupled.csv), [gráfico](../metrics/results/v2-decoupled.svg)):
+
+| Componente | Ca | Ce | I | A | D | Zona de dor |
+|---|---|---|---|---|---|---|
+| `classification` | 1 | 2 | 0,67 | 0,00 | 0,33 | |
+| `extraction` | 1 | 2 | 0,67 | 0,00 | 0,33 | |
+| `gateway` | 1 | 1 | 0,50 | 0,00 | 0,50 | |
+| `main` | 0 | 7 | 1,00 | 0,00 | 0,00 | |
+| `ports` | 6 | 0 | 0,00 | 1,00 | 0,00 | |
+| `report` | 1 | 2 | 0,67 | 0,00 | 0,33 | |
+| `schemas` | 5 | 0 | 0,00 | 0,00 | 1,00 | sim, estável por natureza (a declarar no ADR da métrica) |
+| `suggestion` | 1 | 2 | 0,67 | 0,00 | 0,33 | |
+| `tickets` | 1 | 1 | 0,50 | 0,00 | 0,50 | |
+
+Comparado com a v1: `llm` (D 0,80) e `config` (D 1,00) deixaram de existir. O componente mais dependido agora é `ports` (Ca 6), que é abstrato e está sobre a Main Sequence. As features saíram de I 0,75–0,80 com dependências concretas para I 0,67 com dependências só da porta e dos tipos do contrato.

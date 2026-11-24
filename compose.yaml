@@ -38,8 +38,7 @@ services:
 
   app:
     build: ./app
-    # Piloto: só a F1 já vai pelo gateway; as outras features ainda usam as chaves do .env.
-    env_file: .env
+    # Só a URL e a chave do gateway: as chaves dos providers não chegam à aplicação.
     environment:
       GATEWAY_URL: http://gateway:4000
       GATEWAY_API_KEY: ${LITELLM_MASTER_KEY}
