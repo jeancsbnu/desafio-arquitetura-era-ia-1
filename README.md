@@ -201,11 +201,54 @@ Nos casos de erro e no período sem tickets, a suíte também confere em `/admin
 
 A suíte detecta a troca de um `large` por um `mini` em F2 e F4. Com o `mini`, a sugestão da F2 muda, e 5 dos 7 tickets do dataset da F4 dão outro resultado: por exemplo, o `TK-00002` devolve a nota fiscal `#530720` no lugar do pedido. Em F1 e F3, o `mini` dá a mesma saída (ver "Evidência: modelos `large` × `mini`").
 
-_Script de métrica: a preencher (requisito 3)._
+### Métrica de acoplamento
+
+O script `metrics/coupling.py` usa só a biblioteca padrão (Python 3.12). Ele recebe a pasta do pacote a medir e um nome, e grava `metrics/results/<nome>.csv` e `metrics/results/<nome>.svg`:
+
+```sh
+# o código do checkout atual
+python metrics/coupling.py app/helpdesk main
+
+# uma tag: o script da branch atual sobre um checkout dela
+git worktree add ../v1 v1-coupled
+python metrics/coupling.py ../v1/app/helpdesk v1-coupled
+git worktree remove ../v1
+```
 
 ## Métrica
 
-_A preencher (requisitos 3, 4 e 6)._
+A régua é a do requisito 3: componente é cada módulo `.py` de `app/helpdesk/` (inclusive em subpastas, exceto `__init__.py`), dependência é um import que resolve para outro componente, e I, A e D seguem as fórmulas do enunciado. Onde o enunciado deixa espaço, o script decide assim (está no docstring de `metrics/coupling.py`):
+
+- conta qualquer import do módulo, inclusive dentro de funções;
+- um import que resolve para um pacote (o `__init__.py`) não conta, porque o pacote não é componente;
+- uma classe é abstrata quando `typing.Protocol` ou `abc.ABC` está entre as suas bases diretas;
+- os valores são calculados com frações exatas e arredondados para 2 casas, com meio para cima.
+
+O script foi conferido contra um pacote sintético com subpastas, imports relativos de 1 e 2 níveis, import absoluto, import dentro de função e as variações de `Protocol` e `ABC`. Rodar duas vezes sobre o mesmo checkout gera CSV e SVG idênticos byte a byte.
+
+### v1-coupled
+
+![Gráfico A × I da v1-coupled](metrics/results/v1-coupled.svg)
+
+Resultado em [metrics/results/v1-coupled.csv](metrics/results/v1-coupled.csv). Conferência à mão de três módulos, como o enunciado sugere:
+
+| Componente | Quem importa (Ca) | O que importa (Ce) | I | A | D |
+|---|---|---|---|---|---|
+| `config` | `classification`, `extraction`, `llm`, `report`, `suggestion`, `tickets` (6) | nada além de `os` (0) | 0 / (0 + 6) = 0,00 | sem classes: 0,00 | \|0 + 0 − 1\| = 1,00 |
+| `llm` | `classification`, `extraction`, `report`, `suggestion` (4) | `config` (1); `openai`, `anthropic` e `json` são externos | 1 / (1 + 4) = 0,20 | sem classes: 0,00 | \|0 + 0,2 − 1\| = 0,80 |
+| `report` | `main` (1) | `config`, `llm`, `tickets`, `schemas` (4) | 4 / (4 + 1) = 0,80 | sem classes: 0,00 | \|0 + 0,8 − 1\| = 0,20 |
+
+Leitura:
+
+- **Nenhum componente tem abstração.** A = 0 em todos; as 7 classes de `schemas` são modelos pydantic concretos. Todos os pontos ficam no eixo horizontal, e a distância da Main Sequence é só 1 − I.
+- **Três componentes na zona de dor:** `config` (D 1,00), `schemas` (D 1,00) e `llm` (D 0,80). São os mais importados (Ca 6, 5 e 4) e totalmente concretos, então qualquer mudança neles se propaga para as features.
+  - `llm` é onde mora o acoplamento com os providers: dois SDKs, dois formatos de API, clientes sem timeout (Dores 2 e 3). É concreto, muito dependido e volátil de verdade. Pela régua, o componente que chama o modelo não pode ser exceção.
+  - `config` junta chaves, base URLs e nomes de modelos físicos, os detalhes mais voláteis do sistema (Dor 4), e é o componente mais importado. Também é dor real.
+  - `schemas` são os tipos de valor do contrato HTTP das 4 features, que só mudam quando o contrato muda. É candidato a "estável por natureza" no ADR da métrica.
+- **As features** (`classification`, `extraction`, `suggestion` e `report`) têm I de 0,75 a 0,80 e D de 0,20 a 0,25. Ficam perto da Main Sequence, mas o problema delas aparece do outro lado da dependência: todas importam diretamente o `llm` e o `config` concretos.
+- **`main`** (I 1,00, D 0,00) é o ponto de composição. **`tickets`** (I 0,50, D 0,50) fica na fronteira da zona de dor, sem entrar nela.
+
+_v2-decoupled e main: a preencher (requisitos 4 e 6)._
 
 ## Tabela de capacidades
 
