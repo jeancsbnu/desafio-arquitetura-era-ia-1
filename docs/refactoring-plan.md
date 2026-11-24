@@ -68,11 +68,43 @@ A refatoração está pronta quando todos os itens abaixo forem verdadeiros. Os 
 
 **O que se espera medir:** o Ce de `classification` passa de {`config`, `llm`, `schemas`} para {`ports`, `schemas`}; o Ca de `config` cai de 6 para 5 e o de `llm` de 4 para 3; surgem `ports` (A = 1) e `gateway`. A suíte continua passando, agora com a F1 indo pelo gateway.
 
-**Medição antes e depois:** a preencher após o piloto.
+**Medição antes e depois.** Os componentes que o piloto tocou, medidos com o mesmo script: antes, a `v1-coupled`; depois, o piloto como foi escrito ([CSV](../metrics/results/pilot-classification.csv), [gráfico](../metrics/results/pilot-classification.svg)); e depois da Revisão 1 ([CSV](../metrics/results/pilot-classification-revised.csv), [gráfico](../metrics/results/pilot-classification-revised.svg)).
+
+| Componente | v1-coupled (Ca / Ce / I / A / D) | Piloto como escrito | Piloto revisado |
+|---|---|---|---|
+| `classification` | 1 / 3 / 0,75 / 0,00 / 0,25 | 1 / 2 / 0,67 / 0,00 / 0,33 | 1 / 2 / 0,67 / 0,00 / 0,33 |
+| `ports` | não existia | 1 / 0 / 0,00 / 1,00 / 0,00 | 2 / 0 / 0,00 / 1,00 / 0,00 |
+| `gateway` | não existia | 1 / 0 / 0,00 / 0,00 / **1,00, zona de dor** | 1 / 1 / 0,50 / 0,00 / 0,50 |
+| `llm` | 4 / 1 / 0,20 / 0,00 / 0,80 | 3 / 1 / 0,25 / 0,00 / 0,75 | 3 / 1 / 0,25 / 0,00 / 0,75 |
+| `config` | 6 / 0 / 0,00 / 0,00 / 1,00 | 5 / 0 / 0,00 / 0,00 / 1,00 | 5 / 0 / 0,00 / 0,00 / 1,00 |
+| `main` | 0 / 5 / 1,00 / 0,00 / 0,00 | 0 / 6 / 1,00 / 0,00 / 0,00 | 0 / 6 / 1,00 / 0,00 / 0,00 |
+
+A suíte de caracterização passou inteira (30 testes) com a F1 indo pelo gateway. Em `/admin/calls`, as chamadas `classify` continuaram em `openai/gpt-fake-large`, e o log do gateway registrou as requisições vindas do `app`.
+
+O que saiu como esperado: o Ce de `classification` virou {`ports`, `schemas`}, `ports` nasceu sobre a Main Sequence (A 1,00, D 0,00), e o Ca de `llm` e de `config` caiu de 1. O que não estava previsto está nas revisões abaixo.
 
 ## Revisões
 
-_A preencher após o piloto._
+### Revisão 1: o adaptador declara a porta que implementa
+
+**O que a medição mostrou.** No piloto como escrito, o `gateway` caiu na zona de dor: Ca 1 (`main`), Ce 0, I 0,00, A 0,00, D 1,00. O adaptador implementava a porta só estruturalmente, como o `typing.Protocol` permite, sem importá-la. Para a métrica, ele parecia um componente concreto, estável e de quem outro depende. E é o componente que chama o gateway, que a régua não aceita como exceção.
+
+**O que mudou no plano.** O plano dizia "nenhuma herança nova". Os adaptadores passam a declarar a porta que implementam (`class GatewayLanguageModel(LanguageModel)`). Isso não herda comportamento: a porta não tem implementação, e o comportamento continua vindo por composição.
+
+**Por que a estrutura melhorou, e não só o número.** Com a implementação só estrutural, a dependência do adaptador em relação à porta existia, mas não estava escrita em lugar nenhum. A seta passa a estar no código, no sentido que a inversão de dependência pede: o detalhe depende da abstração. A conformidade passa a ser verificada na definição do adaptador, e não só no ponto em que `main` o injeta. Isso vai importar quando a porta crescer (o streaming do requisito 6). A métrica agora lê o adaptador como ele é: um detalhe que depende da abstração (I 0,50, fora da zona de dor). O mesmo vale para o adaptador de tickets que vem na escala.
+
+### Revisão 2: retry num lugar só
+
+**O que a medição mostrou.** O gateway já faz 3 tentativas por conta própria (1 + 2 retries): com o `openai` em `error_500`, uma chamada direta ao gateway gerou 3 chamadas ao provider em 3,9 s. O SDK da aplicação, com o padrão de 2 retries, repete o pedido inteiro ao gateway. Medido pela borda, com o adaptador usando o padrão do SDK, a F1 respondeu `500` em 15,9 s e gerou **9 chamadas** ao provider. Na v1 eram 3.
+
+**O que mudou no plano.** O adaptador cria o cliente com `max_retries=0`, e as tentativas acontecem num lugar só, o gateway. Medido depois da mudança: `500` em 4,8 s e **3 chamadas**, o mesmo número da v1. Isso entra no critério de pronto (item 6 abaixo). Timeout explícito, backoff e fallback continuam no requisito 5, depois da tag, e esta decisão será registrada no ADR de resiliência.
+
+### Critério de pronto revisado
+
+Os itens 1 a 5 continuam valendo. Os itens 3 e 6 abaixo substituem ou completam o critério original:
+
+3. **Direção das dependências (revisado):** o SDK é importado por um único componente (`gateway`), e só `main` importa esse componente. Nenhuma feature importa um adaptador: o Ce de cada feature está contido em {`ports`, `schemas`}. **Cada adaptador importa a porta que implementa.**
+6. **Tentativas (novo):** com o provider de uma capacidade em `error_500`, `/admin/calls` mostra no máximo 3 chamadas por requisição, o mesmo que a v1.
 
 ## Handoff para o agente
 

@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1006" height="676" viewBox="0 0 1006 676" font-family="Helvetica, Arial, sans-serif" font-size="12">
+<rect width="1006" height="676" fill="#ffffff"/>
+<text x="70" y="28" font-size="16" font-weight="bold" fill="#111">pilot-classification: A × I (helpdesk, 11 componentes)</text>
+<polygon points="70.0,616.0 350.0,616.0 70.0,336.0" fill="#f8d7d3"/>
+<polygon points="630.0,56.0 350.0,56.0 630.0,336.0" fill="#e3e3f3"/>
+<text x="81.2" y="448.0" fill="#a33">zona de dor</text>
+<text x="618.8" y="212.8" fill="#557" text-anchor="end">zona de inutilidade</text>
+<line x1="70.0" y1="616.0" x2="70.0" y2="56.0" stroke="#eee"/>
+<line x1="70.0" y1="616.0" x2="630.0" y2="616.0" stroke="#eee"/>
+<text x="70.0" y="634.0" text-anchor="middle" fill="#444">0</text>
+<text x="62.0" y="620.0" text-anchor="end" fill="#444">0</text>
+<line x1="210.0" y1="616.0" x2="210.0" y2="56.0" stroke="#eee"/>
+<line x1="70.0" y1="476.0" x2="630.0" y2="476.0" stroke="#eee"/>
+<text x="210.0" y="634.0" text-anchor="middle" fill="#444">0.25</text>
+<text x="62.0" y="480.0" text-anchor="end" fill="#444">0.25</text>
+<line x1="350.0" y1="616.0" x2="350.0" y2="56.0" stroke="#eee"/>
+<line x1="70.0" y1="336.0" x2="630.0" y2="336.0" stroke="#eee"/>
+<text x="350.0" y="634.0" text-anchor="middle" fill="#444">0.5</text>
+<text x="62.0" y="340.0" text-anchor="end" fill="#444">0.5</text>
+<line x1="490.0" y1="616.0" x2="490.0" y2="56.0" stroke="#eee"/>
+<line x1="70.0" y1="196.0" x2="630.0" y2="196.0" stroke="#eee"/>
+<text x="490.0" y="634.0" text-anchor="middle" fill="#444">0.75</text>
+<text x="62.0" y="200.0" text-anchor="end" fill="#444">0.75</text>
+<line x1="630.0" y1="616.0" x2="630.0" y2="56.0" stroke="#eee"/>
+<line x1="70.0" y1="56.0" x2="630.0" y2="56.0" stroke="#eee"/>
+<text x="630.0" y="634.0" text-anchor="middle" fill="#444">1</text>
+<text x="62.0" y="60.0" text-anchor="end" fill="#444">1</text>
+<rect x="70.0" y="56.0" width="560" height="560" fill="none" stroke="#999"/>
+<line x1="70.0" y1="56.0" x2="630.0" y2="616.0" stroke="#2a7" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="361.2" y="316.8" fill="#2a7">Main Sequence (A + I = 1)</text>
+<text x="350.0" y="660.0" text-anchor="middle" fill="#111">I (instabilidade)</text>
+<text x="18" y="336.0" text-anchor="middle" fill="#111" transform="rotate(-90 18 336.0)">A (abstração)</text>
+<circle cx="70.0" cy="616.0" r="5" fill="#c0392b"/>
+<text x="75.0" y="607.0" font-weight="bold" fill="#c0392b">1</text>
+<circle cx="70.0" cy="56.0" r="5" fill="#1f5fa8"/>
+<text x="75.0" y="47.0" font-weight="bold" fill="#1f5fa8">2</text>
+<circle cx="210.0" cy="616.0" r="5" fill="#c0392b"/>
+<text x="215.0" y="607.0" font-weight="bold" fill="#c0392b">3</text>
+<circle cx="350.0" cy="616.0" r="5" fill="#1f5fa8"/>
+<text x="355.0" y="607.0" font-weight="bold" fill="#1f5fa8">4</text>
+<circle cx="445.2" cy="616.0" r="5" fill="#1f5fa8"/>
+<text x="450.2" y="607.0" font-weight="bold" fill="#1f5fa8">5</text>
+<circle cx="490.0" cy="616.0" r="5" fill="#1f5fa8"/>
+<text x="495.0" y="607.0" font-weight="bold" fill="#1f5fa8">6</text>
+<circle cx="518.0" cy="616.0" r="5" fill="#1f5fa8"/>
+<text x="523.0" y="607.0" font-weight="bold" fill="#1f5fa8">7</text>
+<circle cx="630.0" cy="616.0" r="5" fill="#1f5fa8"/>
+<text x="621.0" y="607.0" font-weight="bold" fill="#1f5fa8">8</text>
+<text x="666" y="60" font-weight="bold" fill="#111">#</text>
+<text x="690" y="60" font-weight="bold" fill="#111">componente</text>
+<text x="886" y="60" font-weight="bold" fill="#111" text-anchor="end">I</text>
+<text x="936" y="60" font-weight="bold" fill="#111" text-anchor="end">A</text>
+<text x="986" y="60" font-weight="bold" fill="#111" text-anchor="end">D</text>
+<text x="666" y="78" font-weight="bold" fill="#c0392b">1</text>
+<text x="690" y="78" fill="#c0392b">config</text>
+<text x="886" y="78" fill="#c0392b" text-anchor="end">0.00</text>
+<text x="936" y="78" fill="#c0392b" text-anchor="end">0.00</text>
+<text x="986" y="78" fill="#c0392b" text-anchor="end">1.00</text>
+<text x="690" y="96" fill="#c0392b">gateway</text>
+<text x="886" y="96" fill="#c0392b" text-anchor="end">0.00</text>
+<text x="936" y="96" fill="#c0392b" text-anchor="end">0.00</text>
+<text x="986" y="96" fill="#c0392b" text-anchor="end">1.00</text>
+<text x="690" y="114" fill="#c0392b">schemas</text>
+<text x="886" y="114" fill="#c0392b" text-anchor="end">0.00</text>
+<text x="936" y="114" fill="#c0392b" text-anchor="end">0.00</text>
+<text x="986" y="114" fill="#c0392b" text-anchor="end">1.00</text>
+<text x="666" y="132" font-weight="bold" fill="#1f5fa8">2</text>
+<text x="690" y="132" fill="#1f5fa8">ports</text>
+<text x="886" y="132" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="936" y="132" fill="#1f5fa8" text-anchor="end">1.00</text>
+<text x="986" y="132" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="666" y="150" font-weight="bold" fill="#c0392b">3</text>
+<text x="690" y="150" fill="#c0392b">llm</text>
+<text x="886" y="150" fill="#c0392b" text-anchor="end">0.25</text>
+<text x="936" y="150" fill="#c0392b" text-anchor="end">0.00</text>
+<text x="986" y="150" fill="#c0392b" text-anchor="end">0.75</text>
+<text x="666" y="168" font-weight="bold" fill="#1f5fa8">4</text>
+<text x="690" y="168" fill="#1f5fa8">tickets</text>
+<text x="886" y="168" fill="#1f5fa8" text-anchor="end">0.50</text>
+<text x="936" y="168" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="986" y="168" fill="#1f5fa8" text-anchor="end">0.50</text>
+<text x="666" y="186" font-weight="bold" fill="#1f5fa8">5</text>
+<text x="690" y="186" fill="#1f5fa8">classification</text>
+<text x="886" y="186" fill="#1f5fa8" text-anchor="end">0.67</text>
+<text x="936" y="186" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="986" y="186" fill="#1f5fa8" text-anchor="end">0.33</text>
+<text x="666" y="204" font-weight="bold" fill="#1f5fa8">6</text>
+<text x="690" y="204" fill="#1f5fa8">extraction</text>
+<text x="886" y="204" fill="#1f5fa8" text-anchor="end">0.75</text>
+<text x="936" y="204" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="986" y="204" fill="#1f5fa8" text-anchor="end">0.25</text>
+<text x="690" y="222" fill="#1f5fa8">suggestion</text>
+<text x="886" y="222" fill="#1f5fa8" text-anchor="end">0.75</text>
+<text x="936" y="222" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="986" y="222" fill="#1f5fa8" text-anchor="end">0.25</text>
+<text x="666" y="240" font-weight="bold" fill="#1f5fa8">7</text>
+<text x="690" y="240" fill="#1f5fa8">report</text>
+<text x="886" y="240" fill="#1f5fa8" text-anchor="end">0.80</text>
+<text x="936" y="240" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="986" y="240" fill="#1f5fa8" text-anchor="end">0.20</text>
+<text x="666" y="258" font-weight="bold" fill="#1f5fa8">8</text>
+<text x="690" y="258" fill="#1f5fa8">main</text>
+<text x="886" y="258" fill="#1f5fa8" text-anchor="end">1.00</text>
+<text x="936" y="258" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="986" y="258" fill="#1f5fa8" text-anchor="end">0.00</text>
+<text x="666" y="294" fill="#c0392b">em vermelho: zona de dor (A &lt; 0,5, I &lt; 0,5 e D ≥ 0,5)</text>
+</svg>
