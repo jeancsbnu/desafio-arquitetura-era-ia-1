@@ -11,13 +11,10 @@ from .schemas import (Classification, OrderData, PeriodInput, ReplySuggestion, T
 from .suggestion import ReplySuggester
 from .tickets import JsonlTicketSource
 
-MAX_OUTPUT_TOKENS = 2000
-
 # Ponto de composição: os adaptadores são montados aqui e entregues às features.
 language_model = GatewayLanguageModel(
     base_url=os.environ["GATEWAY_URL"],
     api_key=os.environ["GATEWAY_API_KEY"],
-    max_output_tokens=MAX_OUTPUT_TOKENS,
 )
 ticket_source = JsonlTicketSource(os.environ.get("TICKETS_FILE", "/data/tickets.jsonl"))
 

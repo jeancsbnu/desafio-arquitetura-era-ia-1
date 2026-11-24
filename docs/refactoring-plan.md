@@ -50,7 +50,7 @@ Nenhuma herança nova: os adaptadores implementam as portas e são entregues às
   | `order-extraction` | F4 | `openai/gpt-fake-large` |
 
 - As chaves dos providers vivem só no serviço `gateway`. O serviço `app` deixa de receber o `.env` e recebe só a URL e a chave do gateway.
-- Nesta etapa a aplicação usa a master key do gateway, porque o LiteLLM só emite virtual keys com banco de dados. Virtual keys, orçamento, limites, timeout, retry e fallback entram depois da tag (requisito 5).
+- Nesta etapa a aplicação usa a master key do gateway, porque o LiteLLM só emite virtual keys com banco de dados. **É provisório:** uma credencial de administração não deveria estar no serviço que só chama capacidades. No requisito 5, o `app` passa a usar uma virtual key própria, e a master key fica só com quem administra o gateway. Virtual keys, orçamento, limites, timeout, retry e fallback entram depois da tag (requisito 5).
 
 ## Critério de pronto
 
@@ -91,13 +91,26 @@ O que saiu como esperado: o Ce de `classification` virou {`ports`, `schemas`}, `
 
 **O que mudou no plano.** O plano dizia "nenhuma herança nova". Os adaptadores passam a declarar a porta que implementam (`class GatewayLanguageModel(LanguageModel)`). Isso não herda comportamento: a porta não tem implementação, e o comportamento continua vindo por composição.
 
-**Por que a estrutura melhorou, e não só o número.** Com a implementação só estrutural, a dependência do adaptador em relação à porta existia, mas não estava escrita em lugar nenhum. A seta passa a estar no código, no sentido que a inversão de dependência pede: o detalhe depende da abstração. A conformidade passa a ser verificada na definição do adaptador, e não só no ponto em que `main` o injeta. Isso vai importar quando a porta crescer (o streaming do requisito 6). A métrica agora lê o adaptador como ele é: um detalhe que depende da abstração (I 0,50, fora da zona de dor). O mesmo vale para o adaptador de tickets que vem na escala.
+**O que a mudança ganha além do número.** A mudança foi motivada pela métrica, e isso fica dito aqui. O que a justifica é o que ela entrega à estrutura:
+
+- **A seta fica escrita no código.** Com a implementação só estrutural, a dependência do adaptador em relação à porta existia, mas não estava em lugar nenhum. Agora ela está, no sentido que a inversão de dependência pede: o detalhe depende da abstração. Dá para responder "quem implementa esta porta?" lendo o código.
+- **A porta passa a exigir a implementação.** Este ponto foi corrigido depois da revisão independente (ver "Revisão independente da escala"). A primeira versão afirmava que declarar a porta "verificava a conformidade", e isso era falso: em Python, `class X(Porta)` sozinha não verifica nada, e um adaptador que esquecesse `complete` herdaria o corpo vazio da porta e devolveria `None`. Os métodos das portas passaram a ser `@abstractmethod` (o `Protocol` já usa `ABCMeta`). Agora, um adaptador que declara a porta e não implementa um método levanta `TypeError` ao ser instanciado em `main`, e a aplicação não sobe. Isso vai importar quando a porta crescer, com o streaming do requisito 6.
+
+**O que o número diz e o que não diz.** O `gateway` e o `tickets` ficaram com I 0,50 e D 0,50: fora da zona de dor, mas exatamente na fronteira, porque a zona exige I < 0,5. Qualquer adaptador com um dependente (`main`) e uma dependência (a porta) cai nesse ponto. A melhora de D (de 1,00 para 0,50) não prova sozinha que o acoplamento caiu. O que caiu de fato é que nenhuma feature depende mais de um componente concreto.
 
 ### Revisão 2: retry num lugar só
 
 **O que a medição mostrou.** O gateway já faz 3 tentativas por conta própria (1 + 2 retries): com o `openai` em `error_500`, uma chamada direta ao gateway gerou 3 chamadas ao provider em 3,9 s. O SDK da aplicação, com o padrão de 2 retries, repete o pedido inteiro ao gateway. Medido pela borda, com o adaptador usando o padrão do SDK, a F1 respondeu `500` em 15,9 s e gerou **9 chamadas** ao provider. Na v1 eram 3.
 
-**O que mudou no plano.** O adaptador cria o cliente com `max_retries=0`, e as tentativas acontecem num lugar só, o gateway. Medido depois da mudança: `500` em 4,8 s e **3 chamadas**, o mesmo número da v1. Isso entra no critério de pronto (item 6 abaixo). Timeout explícito, backoff e fallback continuam no requisito 5, depois da tag, e esta decisão será registrada no ADR de resiliência.
+**O que mudou no plano.** O adaptador cria o cliente com `max_retries=0`, e as tentativas acontecem num lugar só, o gateway. Medido depois da mudança: `500` em 4,8 s e **3 chamadas**, o mesmo número da v1. Isso entra no critério de pronto (item 6 abaixo). Depois da revisão independente, o total de tentativas do gateway passou a ser declarado em `gateway/config.yaml` (`router_settings.num_retries: 2`), em vez de depender do padrão da versão da imagem; medido de novo, continuam 3 chamadas por falha. Timeout explícito, backoff e fallback continuam no requisito 5, depois da tag, e esta decisão será registrada no ADR de resiliência.
+
+**Como reproduzir a comparação.** O adaptador com os retries do SDK não existe mais no repositório. Para refazer a medição, parta do commit do piloto (`8d28f1e`) e tire `max_retries=0` de `app/helpdesk/gateway.py`. Depois rode `docker compose up -d --build --wait app`, coloque o `openai` em `error_500` (`POST /admin/failures {"provider": "openai", "mode": "error_500"}`), chame a F1 pela borda e conte as chamadas em `/admin/calls`. Devolva `max_retries=0` e repita para comparar.
+
+### Revisão 3: parâmetros do provider ficam no gateway
+
+**O que a revisão independente mostrou.** A v1 só enviava `max_tokens` ao `anthropic`, porque o formato Messages o exige (`git show v1-coupled:app/helpdesk/llm.py`). O adaptador do piloto passou a enviar `max_tokens=2000` em todas as capacidades, inclusive F1 e F4. O provider simulado trunca a saída com `max_tokens`. A suíte não mudou porque as saídas da F1 e da F4 têm 11 tokens, mas era uma mudança de comportamento não declarada. E era também um detalhe de provider vazando para a aplicação.
+
+**O que mudou.** O `max_tokens` saiu da aplicação: nem `main` nem o adaptador o conhecem mais. Ele foi para `gateway/config.yaml`, só nas capacidades atendidas pelo `anthropic` (`max_tokens: 2000`). As requisições voltaram a chegar ao provider como na v1. Para confirmar que o gateway repassa o parâmetro configurado, coloquei temporariamente `max_tokens: 50` na `reply-suggestion`: a resposta veio com `finish_reason: length` e o `/admin/calls` registrou 50 tokens de saída. Depois voltei para 2000.
 
 ### Critério de pronto revisado
 
@@ -132,9 +145,34 @@ O brief não continha a métrica esperada nem as conclusões do piloto além do 
 | 5. Prova no provider | `/admin/calls` depois da suíte | `classify` e `extract` em `openai/gpt-fake-large`, `suggest` e `topics` em `anthropic/claude-fake-large`, como na v1 |
 | 6. Tentativas | cada provider em `error_500`, uma requisição por feature | 3 chamadas por requisição nas 4 features, `500` em ~4,7 s |
 
-Li também o diff das 4 features contra a v1. Prompts, validações (`422` e `502`), lotes de 150, soma por tema, corte em 3 exemplos e ordenação ficaram iguais. A única mudança é de onde vêm o modelo e os tickets.
+Li também o diff das 4 features contra a v1. Prompts, validações (`422` e `502`), lotes de 150, soma por tema, corte em 3 exemplos e ordenação ficaram iguais. Nas features, a única mudança é de onde vêm o modelo e os tickets. Uma diferença que estava no adaptador do piloto, e não nas features, passou nesta leitura e foi apontada pela revisão independente: o `max_tokens` (Revisão 3).
 
 **Aceito ou rejeitado.** Nesta rodada, nada do que o agente produziu precisou ser rejeitado. A rejeição que houve no processo foi do próprio piloto: a métrica reprovou o adaptador implementado só estruturalmente (Revisão 1), e a contagem de chamadas no `/admin/calls` reprovou os retries do SDK (Revisão 2). As duas correções entraram no plano antes do handoff, e por isso o agente já recebeu o padrão corrigido.
+
+## Revisão independente da escala
+
+Antes da tag, um terceiro agente (um subagente Claude Sonnet, sem acesso às conclusões anteriores) revisou o requisito 4 inteiro. Ele recebeu o enunciado, este plano, o brief, o código e as medições. Não encontrou nada que bloqueasse a tag e confirmou por conta própria:
+
+- `provider-fake/`, `edge/` e `data/` iguais ao commit base;
+- a suíte idêntica à da `v1-coupled`;
+- os greps vazios e o ambiente do `app` sem chaves de provider;
+- os modelos em `/admin/calls`;
+- o CSV da v2 reproduzido byte a byte e recalculado à mão em 5 componentes.
+
+O que ele apontou e o que foi feito:
+
+| Apontamento | O que foi feito |
+|---|---|
+| A Revisão 1 afirmava que declarar a porta verificava a conformidade, o que é falso em Python | Métodos das portas com `@abstractmethod`. A justificativa foi reescrita, assumindo que a mudança foi motivada pela métrica e que o adaptador fica na fronteira (I 0,50) |
+| O adaptador enviava `max_tokens` também para F1 e F4, sem declarar | `max_tokens` foi para a configuração do gateway, só nas capacidades do `anthropic` (Revisão 3) |
+| As 3 tentativas dependiam de um padrão não escrito do LiteLLM | `router_settings.num_retries: 2` em `gateway/config.yaml` (Revisão 2) |
+| Os números de 9 e 3 chamadas não eram reproduzíveis a partir do repositório | O roteiro de reprodução foi registrado (Revisão 2) |
+| `handoff-brief.md` expunha um caminho local da máquina | Trocado por um marcador, com aviso no topo do brief |
+| `app` dependia de `provider-fake` no compose sem falar mais com ele | `depends_on` só no `gateway` |
+| Master key no `app` sem aviso de que é provisório | Aviso no plano e no `compose.yaml` |
+| O ADR da métrica que vai declarar `schemas` ainda não existe | Pendência registrada no README. É critério da `main`, não da tag |
+
+Depois das correções: a suíte passou de novo (30), a métrica reproduziu o CSV e o SVG da v2 byte a byte (as correções não mudam nenhum import nem nenhuma classe), e a contagem de tentativas com cada provider em `error_500` continuou em 3.
 
 ## Resultado: v2-decoupled
 

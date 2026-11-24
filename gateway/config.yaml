@@ -1,8 +1,8 @@
 # AI Gateway (LiteLLM Proxy).
 #
 # A aplicação só conhece os nomes lógicos (`model_name`): uma capacidade por feature. O modelo
-# físico, o provider e a credencial de cada capacidade ficam aqui. Trocar o modelo de uma
-# capacidade é alterar este arquivo e reiniciar só o serviço `gateway`.
+# físico, o provider, a credencial e os parâmetros que dependem do provider ficam aqui. Trocar o
+# modelo de uma capacidade é alterar este arquivo e reiniciar só o serviço `gateway`.
 
 model_list:
   - model_name: ticket-classification        # F1
@@ -16,18 +16,25 @@ model_list:
       model: anthropic/claude-fake-large
       api_base: http://provider-fake:8090/anthropic
       api_key: os.environ/FAKE_ANTHROPIC_KEY
+      max_tokens: 2000                       # o formato Messages exige max_tokens
 
   - model_name: topics-report                # F3
     litellm_params:
       model: anthropic/claude-fake-large
       api_base: http://provider-fake:8090/anthropic
       api_key: os.environ/FAKE_ANTHROPIC_KEY
+      max_tokens: 2000
 
   - model_name: order-extraction             # F4
     litellm_params:
       model: openai/gpt-fake-large
       api_base: http://provider-fake:8090/openai/v1
       api_key: os.environ/FAKE_OPENAI_KEY
+
+router_settings:
+  # 1 tentativa + 2 retries por requisição, o mesmo total da v1. Declarado aqui para não depender
+  # do padrão da versão da imagem. Timeout, backoff e fallback entram no requisito 5.
+  num_retries: 2
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

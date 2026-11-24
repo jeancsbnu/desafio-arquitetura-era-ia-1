@@ -39,6 +39,7 @@ services:
   app:
     build: ./app
     # Só a URL e a chave do gateway: as chaves dos providers não chegam à aplicação.
+    # Provisório: na v2 é a master key do gateway; no requisito 5 o app passa a ter uma virtual key.
     environment:
       GATEWAY_URL: http://gateway:4000
       GATEWAY_API_KEY: ${LITELLM_MASTER_KEY}
@@ -50,7 +51,5 @@ services:
       timeout: 3s
       retries: 20
     depends_on:
-      provider-fake:
-        condition: service_healthy
       gateway:
         condition: service_healthy
