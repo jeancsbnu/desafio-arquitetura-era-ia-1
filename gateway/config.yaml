@@ -42,8 +42,8 @@ x-timeouts:
   suggestion: &suggestion-timeout   # F2: ~16 s sem streaming; com streaming, 5 s até o 1º trecho
     timeout: 30
     stream_timeout: 5
-  report: &report-timeout      # F3: ~10 s por lote de 150 tickets, em segundo plano
-    timeout: 30
+  report: &report-timeout      # F3: ~10 s por lote; 3 destinos × 15 s cabem nos 60 s de `failed`
+    timeout: 15
 
 model_list:
   # F1 Classificar ticket. Destinos: primário, fallback técnico, modelo fraco.

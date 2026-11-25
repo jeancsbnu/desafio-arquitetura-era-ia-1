@@ -18,7 +18,13 @@ Trocar o modelo de uma feature é editar `gateway/config.yaml` e reiniciar só o
 - **classificação, sugestão e relatório** respondem com o modelo `mini`, cuja saída foi medida como suficiente para cada uma;
 - **extração de pedido** falha explicitamente com `503`, porque alimenta uma automação sem revisão humana e o `mini` erra 30% das extrações.
 
-_O modo de execução de cada feature (requisito 6) entra aqui quando estiver implementado._
+Cada feature é entregue no modo que o seu contrato pede ([ADR 0008](docs/adr/0008-modo-de-execucao.md)):
+
+- **F1 (classificação) e F4 (extração):** síncronas, porque respondem em ~1,1 s.
+- **F2 (sugestão):** chega por streaming (Server-Sent Events). O atendente vê o 1º trecho em menos de 1 s, e não depois de 16 s.
+- **F3 (relatório):** assíncrona. O pedido do mês é aceito em milissegundos com `202`, e o relatório completo fica disponível depois, pela URL de status.
+
+Nenhuma requisição termina em `504` da borda, nem com o provider fora ou travado.
 
 ## Diagnóstico da v1
 
@@ -212,9 +218,9 @@ python -m pip install -r tests/characterization/requirements.txt   # uma vez
 python -m pytest tests/characterization
 ```
 
-As URLs podem ser trocadas pelas variáveis `HELPDESK_URL` e `PROVIDER_URL`. A suíte leva ~1,5 min, porque F2 e F3 levam de 10 a 20 s por chamada na v1.
+As URLs podem ser trocadas pelas variáveis `HELPDESK_URL` e `PROVIDER_URL`. A suíte leva ~1,5 min, porque F2 e F3 levam de 10 a 20 s por chamada.
 
-Para cada caso, a suíte fixa o status, o `Content-Type` e o corpo inteiro da resposta (campos e valores), conforme o comportamento da `v1-coupled`:
+Para cada caso, a suíte fixa o status, o `Content-Type` e o corpo inteiro da resposta (campos e valores), conforme o comportamento da `v1-coupled`. A suíte é a mesma nas tags `v1-coupled` e `v2-decoupled`. Na `main`, os testes da F2 e da F3 foram atualizados para o contrato novo (streaming e assíncrono, [ADR 0008](docs/adr/0008-modo-de-execucao.md)). Eles conferem que o conteúdo continua o mesmo gravado da v1: o texto concatenado da F2 e o relatório da F3 batem com `golden/`.
 
 | Feature | Casos de sucesso | Erros de entrada (`422`) |
 |---|---|---|
@@ -225,7 +231,21 @@ Para cada caso, a suíte fixa o status, o `Content-Type` e o corpo inteiro da re
 
 Nos casos de erro e no período sem tickets, a suíte também confere em `/admin/calls` que nenhuma chamada chegou ao provider.
 
-A suíte detecta a troca de um `large` por um `mini` em F2 e F4. Com o `mini`, a sugestão da F2 muda, e 5 dos 7 tickets do dataset da F4 dão outro resultado: por exemplo, o `TK-00002` devolve a nota fiscal `#530720` no lugar do pedido. Em F1 e F3, o `mini` dá a mesma saída (ver "Evidência: modelos `large` × `mini`").
+### Testes dos fluxos
+
+A suíte em `tests/flows/` confere pela borda os critérios de "Fluxos de chamada" e de fallback do enunciado. São 9 testes:
+- os prazos (F1 em até 3 s, 1º trecho da F2 em até 1,5 s e antes da metade do tempo total, `202` da F3 em até 1 s);
+- o relatório do mês com `total_tickets` 5000;
+- os cenários de falha do provider, conferidos em `/admin/calls`: fallback técnico, F1 com o primário travado, evento `error` no meio do stream, F3 em `failed` em até 60 s, e a tabela de fallback sem nenhum `large`.
+
+Ela usa os mesmos requisitos da suíte de caracterização e limpa o `/admin/calls` a cada teste.
+
+```sh
+python -m pytest tests/flows                  # ~9 min, com o relatório do mês inteiro
+python -m pytest tests/flows -m "not slow"    # ~2 min, sem ele
+```
+
+A suíte de caracterização detecta a troca de um `large` por um `mini` em F2 e F4. Com o `mini`, a sugestão da F2 muda, e 5 dos 7 tickets do dataset da F4 dão outro resultado: por exemplo, o `TK-00002` devolve a nota fiscal `#530720` no lugar do pedido. Em F1 e F3, o `mini` dá a mesma saída (ver "Evidência: modelos `large` × `mini`").
 
 ### Métrica de acoplamento
 
@@ -286,9 +306,19 @@ Leitura, comparando com a v1:
 - **`ports` é o novo centro.** É o componente mais dependido (Ca 6: as 4 features e os 2 adaptadores) e é totalmente abstrato (2 `Protocol`s). Fica no canto estável-abstrato, sobre a Main Sequence (D 0,00): o que muitos usam é justamente o que não tem implementação para mudar.
 - **As features dependem só da porta e do contrato.** `classification`, `extraction`, `suggestion` e `report` têm Ce {`ports`, `schemas`}, I 0,67 e D 0,33. Na v1 tinham I de 0,75 a 0,80, mas dependiam de `llm` e `config` concretos.
 - **Os adaptadores são detalhes que dependem da abstração.** `gateway` (o único com SDK) e `tickets` declaram a porta que implementam, e só `main` os importa. Ficam com I 0,50 e D 0,50: fora da zona de dor, mas exatamente na fronteira, já que a zona exige I < 0,5. Isso não estava no plano original. O piloto mostrou o adaptador na zona de dor quando ele implementava a porta só estruturalmente, e a mudança foi motivada pela métrica, como o plano registra (Revisão 1). O que ela entrega à estrutura: a seta adaptador → porta escrita no código, e portas com métodos abstratos, de modo que um adaptador incompleto não sobe.
-- **`schemas` continua na zona de dor** (D 1,00). São os tipos de valor do contrato HTTP, que só mudam quando o contrato muda. Vai ser declarado "estável por natureza" no ADR da métrica; esse ADR ainda é pendência (requisito 7).
+- **`schemas` continua na zona de dor** (D 1,00). São os tipos de valor do contrato HTTP, que só mudam quando o contrato muda. Está declarado "estável por natureza" no [ADR 0009](docs/adr/0009-leitura-da-metrica.md).
 
-_main: a preencher (requisito 6)._
+### main
+
+![Gráfico A × I da main](metrics/results/main.svg)
+
+Resultado em [metrics/results/main.csv](metrics/results/main.csv). Leitura, comparando com a v2:
+
+- **Na zona de dor, só `schemas`**, a exceção declarada no [ADR 0009](docs/adr/0009-leitura-da-metrica.md): tipos de valor do contrato HTTP, agora com o `TaskStatus` da F3. Nenhum outro componente está na zona. O componente que chama o gateway (`gateway`) e as quatro features estão fora dela.
+- **`ports` cresceu com os modos de execução.** Ganhou o `stream` da F2, a porta `TaskRunner` da F3 e as exceções do contrato (`ModelUnavailable` e `ModelRejectedInput`). Com 3 `Protocol`s e 2 exceções, A caiu para 0,60. Como passou a importar `schemas` (o `TaskStatus`), I subiu para 0,11. O D de 0,29 continua perto da Main Sequence, e `ports` segue o componente mais dependido (Ca 8).
+- **Nasceu o adaptador `background`** (I 0,67, D 0,33), o pool de threads da F3, que implementa `TaskRunner` e é importado só por `main`. É o mesmo desenho de `gateway` e `tickets`: as features não sabem como a tarefa roda.
+- **As features continuam com Ce {`ports`, `schemas`}.** A F3 assíncrona e a F2 em streaming não trouxeram nenhuma dependência concreta para elas. O SDK continua importado só por `gateway`, e os adaptadores, só por `main` (o ponto de composição, I 1,00).
+- **`gateway` e `tickets` continuam na fronteira** (I 0,50, D 0,50), como na v2.
 
 ## Tabela de capacidades
 
@@ -297,8 +327,8 @@ A aplicação conhece só as 4 capacidades lógicas, uma por feature ([ADR 0003]
 | Capacidade lógica | Feature | Modelo primário | Fallback técnico | Política com modelo fraco | Timeout por tentativa |
 |---|---|---|---|---|---|
 | `ticket-classification` | F1 | `openai/gpt-fake-large` | `anthropic/claude-fake-large` | aceita: `openai/gpt-fake-mini` | 5 s |
-| `reply-suggestion` | F2 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 30 s; 5 s até o 1º trecho em streaming |
-| `topics-report` | F3 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 30 s por lote |
+| `reply-suggestion` | F2 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 5 s até o 1º trecho (streaming) |
+| `topics-report` | F3 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 15 s por lote |
 | `order-extraction` | F4 | `openai/gpt-fake-large` | `anthropic/claude-fake-large` | recusa: falha explícita | 5 s |
 
 **Número máximo de tentativas por destino** (primário, fallback técnico e, se houver, modelo fraco), o mesmo em todas as capacidades:
@@ -309,7 +339,10 @@ A aplicação conhece só as 4 capacidades lógicas, uma por feature ([ADR 0003]
 | timeout (o provider não envia bytes dentro do prazo da capacidade) | **1** (sem retry) | próximo destino |
 | outros `4xx` (ex.: entrada maior que o contexto do modelo) | **1** (sem retry) | próximo destino: o LiteLLM aplica a lista de fallbacks a qualquer erro. Se todos recusarem, a feature responde `422` |
 
-O SDK da aplicação não repete nada (`max_retries=0`): as tentativas acontecem só no gateway. Cada feature tem ainda um prazo total para a resposta do gateway (`TIMEOUT_SECONDS`: 14 s na F1 e na F4, 28 s na F2, 60 s por lote na F3). Estourado esse prazo, ou esgotados os destinos, a feature responde `503` explícito. Se os destinos recusarem a entrada (`400` do gateway), ela responde `422`, porque tentar de novo não adianta.
+O SDK da aplicação não repete nada (`max_retries=0`): as tentativas acontecem só no gateway. Cada feature tem ainda um prazo no app para esperar o gateway (`TIMEOUT_SECONDS`): 14 s na F1 e na F4; 20 s sem receber nada na F2; 50 s por lote na F3. Estourado esse prazo, ou esgotados os destinos:
+- a F1 e a F4 respondem `503` explícito;
+- a F2 responde `503`, se nada tiver sido enviado, ou o evento `error`, se o stream já tiver começado;
+- a tarefa da F3 vai para `failed`, com o motivo. Se os destinos recusarem a entrada (`400` do gateway), ela responde `422`, porque tentar de novo não adianta.
 
 ## Tabela de fallback
 
@@ -320,8 +353,8 @@ Sem **nenhum modelo `large` disponível**, cada feature faz o que o [ADR 0004](d
 | Feature | Sem nenhum `large` | Status | Por quê (evidência nos 5.000 tickets) |
 |---|---|---|---|
 | F1 Classificar | responde com a classificação do `gpt-fake-mini` | `200` | o `mini` deu a mesma saída em 5.000 de 5.000 tickets |
-| F2 Sugerir resposta | responde com a sugestão do `claude-fake-mini`, mais curta | `200` | numa amostra de 200, os mesmos passos de orientação, a mesma abertura e o mesmo fechamento, em 2/5 do tamanho; o atendente revisa antes de enviar |
-| F3 Relatório | produz o relatório com o `claude-fake-mini` | `200` | o mesmo relatório: 0 diferenças nos 34 lotes do mês |
+| F2 Sugerir resposta | faz o streaming da sugestão do `claude-fake-mini`, mais curta, até o `event: end` | `200` | numa amostra de 200, os mesmos passos de orientação, a mesma abertura e o mesmo fechamento, em 2/5 do tamanho; o atendente revisa antes de enviar |
+| F3 Relatório | produz o relatório com o `claude-fake-mini`: a tarefa chega a `303` → resultado | `202`, depois `303` e `200` | o mesmo relatório: 0 diferenças nos 34 lotes do mês |
 | F4 Extrair pedido | falha explícita, sem chamar o `mini`: `{"detail": "Nenhum modelo disponível...", "capability": "order-extraction", "reason": "..."}` | `503` | o `mini` erra 30,7% (pedido trocado pela nota fiscal em 14,3%, produto perdido em todos), e a saída vai para uma automação sem revisão humana |
 
 ### Evidência: modelos `large` × `mini`
@@ -352,7 +385,89 @@ done
 
 ## Fluxos
 
-_A preencher (requisito 6)._
+O modo de cada feature e as perguntas que o decidiram estão no [ADR 0008](docs/adr/0008-modo-de-execucao.md). Todos os comandos são pela borda (`localhost:8000`).
+
+```sh
+T='{"ticket_id": "TK-00042", "text": "Meu pedido #481516 não chegou e já passou do prazo, urgente"}'
+```
+
+### F1 Classificar ticket: síncrono
+
+O resultado completo vem no corpo, em ~1,1 s. Sem modelo disponível, a resposta é `503` com `{"detail", "capability", "reason"}`.
+
+```sh
+curl -s -X POST localhost:8000/tickets/classification -H "Content-Type: application/json" -d "$T"
+# {"ticket_id":"TK-00042","category":"delivery","priority":"high"}
+```
+
+### F2 Sugerir resposta: streaming (Server-Sent Events)
+
+`200` com `Content-Type: text/event-stream`. Cada trecho chega num evento `data: {"chunk": ...}`, e o fim, no evento `end`. O 1º trecho chega em ~0,9 s, e o texto completo em ~17 s. Para montar a sugestão, concatene os `chunk` na ordem.
+
+```sh
+curl -N -X POST localhost:8000/tickets/reply-suggestion -H "Content-Type: application/json" -d "$T"
+# data: {"chunk": "Olá!"}
+# data: {"chunk": " Sin"}
+# ...
+# event: end
+# data: {"ticket_id": "TK-00042"}
+```
+
+Se a geração falhar depois do 1º trecho, quando o `200` já foi enviado, o stream termina com o evento `error`. Para ver isso, coloque o provider da F2 em `midstream_error`:
+
+```sh
+curl -s -X POST localhost:8090/admin/failures -H "Content-Type: application/json" -d '{"provider": "anthropic", "mode": "midstream_error"}'
+curl -N -X POST localhost:8000/tickets/reply-suggestion -H "Content-Type: application/json" -d "$T"
+# data: {"chunk": ...}  (cerca de 1/4 do texto)
+# event: error
+# data: {"ticket_id": "TK-00042", "message": "A geração foi interrompida"}
+curl -s -X POST localhost:8090/admin/reset
+```
+
+Uma falha antes do 1º trecho (nenhum destino disponível) ainda vira status HTTP: `503`, ou `422` se a entrada for recusada.
+
+### F3 Relatório de temas: assíncrono (Asynchronous Request-Reply)
+
+O pedido é aceito na hora com `202`, `Location` e `Retry-After`. Consulte a URL de status até ela responder `303 See Other`, que aponta para o relatório. O mês inteiro leva ~6 min.
+
+```sh
+curl -s -i -X POST localhost:8000/reports/topics -H "Content-Type: application/json" \
+  -d '{"start": "2026-08-01", "end": "2026-08-31"}'
+# HTTP/1.1 202 Accepted
+# location: /reports/topics/status/<id>
+# retry-after: 5
+# {"task_id":"<id>","state":"pending"}
+
+curl -s -i localhost:8000/reports/topics/status/<id>
+# 200 {"state":"running","progress":"1800/5000"}      (enquanto processa)
+# 200 {"state":"failed","reason":"..."}                (se não puder terminar; em até 60 s)
+# 303 See Other, location: /reports/topics/<id>       (quando termina)
+
+curl -s localhost:8000/reports/topics/<id>
+# {"start":"2026-08-01","end":"2026-08-31","total_tickets":5000,"topics":[...]}
+```
+
+Para acompanhar até o fim num comando só, o `curl -L` segue o `303` até o relatório. O `%header{}` exige curl 7.84 ou mais novo:
+
+```sh
+LOC=$(curl -s -o /dev/null -w "%header{location}" -X POST localhost:8000/reports/topics \
+  -H "Content-Type: application/json" -d '{"start": "2026-08-01", "end": "2026-08-31"}')
+until curl -s -o /dev/null -w "%{http_code}" "localhost:8000$LOC" | grep -qE "303"; do
+  curl -s "localhost:8000$LOC"; echo; sleep 5
+done
+curl -s -L "localhost:8000$LOC" | head -c 300
+```
+
+Erros de entrada continuam síncronos: `422` para `start` depois de `end`, data inválida ou campo faltando. Um id desconhecido dá `404`, e pedir o resultado antes do fim dá `409`. As tarefas ficam na memória do `app` e somem se ele reiniciar.
+
+### F4 Extrair dados do pedido: síncrono
+
+O resultado completo vem no corpo, em ~1,1 s. Sem modelo `large`, a resposta é `503` explícito (ADR 0004).
+
+```sh
+curl -s -X POST localhost:8000/tickets/extraction -H "Content-Type: application/json" -d "$T"
+# {"ticket_id":"TK-00042","order_number":"#481516","product":null}
+```
 
 ## Troca de modelo
 
@@ -426,5 +541,7 @@ Resultado: 1ª e 2ª `200`; 3ª e 4ª `429` ("Rate limit exceeded ... Current li
 | [0005](docs/adr/0005-timeout-e-retry.md) | software | tentativas e timeout por destino no gateway, prazo total na feature, nenhum retry no SDK |
 | [0006](docs/adr/0006-governanca-de-chaves.md) | solução | virtual keys por consumidor, com orçamento e limite declarados em `gateway/keys.yaml` e aplicados na subida |
 | [0007](docs/adr/0007-banco-do-gateway.md) | solução | Postgres (`gateway-db`) para as virtual keys e o gasto por chave |
+| [0008](docs/adr/0008-modo-de-execucao.md) | solução | F1 e F4 síncronas, F2 em streaming (SSE), F3 assíncrona (Asynchronous Request-Reply), com as perguntas da árvore de decisão por feature |
+| [0009](docs/adr/0009-leitura-da-metrica.md) | software | régua fixa nas três medições; `schemas` declarado estável por natureza; nenhuma outra exceção |
 
-_ADRs do modo de execução (requisito 6) e da leitura da métrica: a preencher._
+O plano de refatoração, com o piloto, as revisões e o handoff para o agente de IA, está em [docs/refactoring-plan.md](docs/refactoring-plan.md).

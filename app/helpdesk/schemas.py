@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,11 +13,6 @@ class Classification(BaseModel):
     ticket_id: str
     category: str
     priority: str
-
-
-class ReplySuggestion(BaseModel):
-    ticket_id: str
-    suggestion: str
 
 
 class OrderData(BaseModel):
@@ -41,3 +37,11 @@ class TopicsReport(BaseModel):
     end: date
     total_tickets: int
     topics: list[Topic]
+
+
+class TaskStatus(BaseModel):
+    """Estado de uma tarefa em segundo plano (F3): `failed` traz o motivo."""
+
+    state: Literal["pending", "running", "done", "failed"]
+    progress: str | None = None
+    reason: str | None = None

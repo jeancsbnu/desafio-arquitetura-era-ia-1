@@ -28,14 +28,14 @@ Opção 3, com cada mecanismo num lugar declarado:
 
 | Mecanismo | Onde | Valor |
 |---|---|---|
-| Timeout por tentativa (segundos sem bytes do provider) | `gateway/config.yaml`, por capacidade | F1 e F4: 5 s. F2: 30 s sem streaming, 5 s até o 1º trecho com streaming. F3: 30 s por lote |
+| Timeout por tentativa (segundos sem bytes do provider) | `gateway/config.yaml`, por capacidade | F1 e F4: 5 s. F2 (streaming): 5 s até o 1º trecho. F3: 15 s por lote, para 3 destinos caberem nos 60 s em que uma tarefa sem saída precisa chegar a `failed` (ADR 0008) |
 | Retry de falha transitória (`5xx` e `429`) | `gateway/config.yaml`, `retry_policy` | 2 retries com backoff exponencial do LiteLLM: **até 3 tentativas por destino** |
 | Retry de timeout | `gateway/config.yaml`, `TimeoutErrorRetries: 0` | nenhum: um provider travado não é transitório dentro do orçamento de latência, então vai direto ao próximo destino (**1 tentativa por destino**) |
 | Retry de erro não transitório (`400`, `401`) | `gateway/config.yaml` | nenhum, **1 tentativa por destino**. O LiteLLM ainda aplica a lista de fallbacks a esses erros: uma entrada maior que o contexto passa pelos 3 destinos, 1 chamada em cada. Tentei desligar isso com `context_window_fallbacks`, mas o LiteLLM não reconhece o `400` do provider simulado como erro de contexto, então a configuração não teve efeito e foi removida |
 | Entrada recusada por todos os destinos (`400` final do gateway) | `app/helpdesk/gateway.py` e `main.py` | o adaptador levanta `ModelRejectedInput`, e `main` responde `422`: tentar de novo não adianta |
 | Ordem dos destinos | `gateway/config.yaml`, `fallbacks` | primário → fallback técnico → modelo fraco (ADR 0004) |
 | Retry no SDK da aplicação | `app/helpdesk/gateway.py` | `max_retries=0`: as tentativas acontecem num lugar só |
-| Prazo total que a feature espera pelo gateway | constante `TIMEOUT_SECONDS` de cada feature | F1 e F4: 14 s. F2: 28 s. F3: 60 s por lote. Estourado o prazo ou esgotados os destinos, o adaptador levanta `ModelUnavailable` e `main` responde `503` explícito |
+| Prazo que a feature espera pelo gateway | constante `TIMEOUT_SECONDS` de cada feature | F1 e F4: 14 s. F2: 20 s sem receber nada (cobre a cadeia de 3 × 5 s até o 1º trecho). F3: 50 s por lote. Estourado o prazo ou esgotados os destinos, o adaptador levanta `ModelUnavailable`. Ela vira `503` na F1 e na F4, `503` ou o evento `error` na F2 (antes ou depois do 1º trecho) e `failed` na F3 |
 | Cooldown (circuit breaker) | `gateway/config.yaml`, `disable_cooldowns: true` | desligado: fora do escopo. Cada requisição percorre os destinos na mesma ordem, e o comportamento fica previsível |
 
 O prazo da F1 e da F4 (14 s) cobre o pior caso da cadeia de timeouts: 5 s no primário, mais 5 s no fallback, mais o modelo fraco. Ele também garante a resposta em até 15 s mesmo quando todos os destinos travam.
@@ -44,7 +44,7 @@ O prazo da F1 e da F4 (14 s) cobre o pior caso da cadeia de timeouts: 5 s no pri
 
 - Melhor: o número de tentativas é limitado, previsível e declarado (3 por destino em falha transitória, 1 em timeout). Uma falha gera 3 chamadas por destino, como na v1, e não 9. Um provider travado custa 5 s à F1, e não 15 min.
 - Pior: o encadeamento até o modelo fraco é lento. Com os dois `large` em `error_500`, a F1 respondeu em 10,2 s, por causa de 6 tentativas com backoff antes do `mini`. Sem cooldown, cada requisição paga esse caminho enquanto a falha durar.
-- **Limitação conhecida até o requisito 6:** a F2 ainda é síncrona. Com o primário travado, o gateway só desiste após 30 s, e a aplicação corta antes, em 28 s, com `503`. Não há `504` da borda, mas a espera é longa. O streaming do requisito 6 resolve isso com o `stream_timeout` de 5 s até o 1º trecho.
+- Resolvido no requisito 6: enquanto a F2 era síncrona, um primário travado a fazia esperar 28 s até o `503`. Com o streaming (ADR 0008), o gateway desiste do primário em 5 s sem o 1º trecho, e o stream completo chega pelo fallback, com o 1º trecho em ~6 s.
 
 ## Evidência
 

@@ -54,7 +54,7 @@ O comportamento implementado foi conferido pela borda, com `/admin/calls`.
 
 **Provider primário inteiro em `error_500`** (`{"provider": "openai", "mode": "error_500"}`). F1 e F4 respondem `200`, e o `/admin/calls` registra `gpt-fake-large:500` 3 vezes e depois `claude-fake-large:200`. Com o `anthropic` fora, o mesmo acontece com F2 e F3, invertendo os providers.
 
-**Os dois `large` em `error_500`** (`{"provider": "openai", "model": "gpt-fake-large", "mode": "error_500"}` e `{"provider": "anthropic", "model": "claude-fake-large", "mode": "error_500"}`):
+**Os dois `large` em `error_500`** (`{"provider": "openai", "model": "gpt-fake-large", "mode": "error_500"}` e `{"provider": "anthropic", "model": "claude-fake-large", "mode": "error_500"}`). Medido no requisito 5, quando F2 e F3 ainda eram síncronas. Depois do requisito 6, a F2 faz o streaming do `mini` até o `event: end`, e a tarefa da F3 chega a `303`. O teste `test_without_large_models_each_feature_follows_the_fallback_table`, em `tests/flows/`, confere as quatro linhas no modo atual.
 
 | Feature | Resposta | `/admin/calls` |
 |---|---|---|
