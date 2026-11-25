@@ -307,9 +307,9 @@ A aplicação conhece só as 4 capacidades lógicas, uma por feature ([ADR 0003]
 |---|---|---|
 | `5xx` ou `429` (transitória) | **3** (1 + 2 retries, com backoff exponencial) | próximo destino |
 | timeout (o provider não envia bytes dentro do prazo da capacidade) | **1** (sem retry) | próximo destino |
-| outros `4xx` | **1** | a requisição falha |
+| outros `4xx` (ex.: entrada maior que o contexto do modelo) | **1** (sem retry) | próximo destino: o LiteLLM aplica a lista de fallbacks a qualquer erro. Se todos recusarem, a feature responde `422` |
 
-O SDK da aplicação não repete nada (`max_retries=0`): as tentativas acontecem só no gateway. Cada feature tem ainda um prazo total para a resposta do gateway (`TIMEOUT_SECONDS`: 14 s na F1 e na F4, 28 s na F2, 60 s por lote na F3). Estourado esse prazo, a feature responde `503` explícito.
+O SDK da aplicação não repete nada (`max_retries=0`): as tentativas acontecem só no gateway. Cada feature tem ainda um prazo total para a resposta do gateway (`TIMEOUT_SECONDS`: 14 s na F1 e na F4, 28 s na F2, 60 s por lote na F3). Estourado esse prazo, ou esgotados os destinos, a feature responde `503` explícito. Se os destinos recusarem a entrada (`400` do gateway), ela responde `422`, porque tentar de novo não adianta.
 
 ## Tabela de fallback
 
@@ -320,13 +320,13 @@ Sem **nenhum modelo `large` disponível**, cada feature faz o que o [ADR 0004](d
 | Feature | Sem nenhum `large` | Status | Por quê (evidência nos 5.000 tickets) |
 |---|---|---|---|
 | F1 Classificar | responde com a classificação do `gpt-fake-mini` | `200` | o `mini` deu a mesma saída em 5.000 de 5.000 tickets |
-| F2 Sugerir resposta | responde com a sugestão do `claude-fake-mini`, mais curta | `200` | mesmos 5 passos de orientação em 2/5 do tamanho; o atendente revisa antes de enviar |
+| F2 Sugerir resposta | responde com a sugestão do `claude-fake-mini`, mais curta | `200` | numa amostra de 200, os mesmos passos de orientação, a mesma abertura e o mesmo fechamento, em 2/5 do tamanho; o atendente revisa antes de enviar |
 | F3 Relatório | produz o relatório com o `claude-fake-mini` | `200` | o mesmo relatório: 0 diferenças nos 34 lotes do mês |
 | F4 Extrair pedido | falha explícita, sem chamar o `mini`: `{"detail": "Nenhum modelo disponível...", "capability": "order-extraction", "reason": "..."}` | `503` | o `mini` erra 30,7% (pedido trocado pela nota fiscal em 14,3%, produto perdido em todos), e a saída vai para uma automação sem revisão humana |
 
 ### Evidência: modelos `large` × `mini`
 
-A comparação completa foi feita por [scripts/compare_models.py](scripts/compare_models.py), que chama o provider direto com a mesma entrada nos dois tamanhos (~11 min, com o compose no ar):
+A comparação completa foi feita por [scripts/compare_models.py](scripts/compare_models.py), que chama o provider direto com a mesma entrada nos dois tamanhos (~11 min com todas as tarefas, com o compose no ar). Um terceiro argumento opcional escolhe as tarefas (ex.: `extract,suggest`):
 
 ```sh
 python scripts/compare_models.py data/tickets.jsonl docs/adr/evidence/large-vs-mini.json
@@ -336,8 +336,8 @@ python scripts/compare_models.py data/tickets.jsonl docs/adr/evidence/large-vs-m
 |---|---|---|
 | `classify` | 5.000 tickets | 0 diferenças |
 | `topics` | 34 lotes de 150 (o mês inteiro) | 0 diferenças |
-| `suggest` | 200 tickets | texto médio de 2.431 para 1.066 caracteres, mesmos 5 passos distintos |
-| `extract` | 5.000 tickets | 1.533 diferenças: 717 números de pedido errados, 953 de 953 produtos perdidos |
+| `suggest` | amostra de 200 (1 a cada 25) | texto médio de 2.431 para 1.066 caracteres; nos 200, o mesmo conjunto de passos distintos, a mesma abertura e o mesmo fechamento |
+| `extract` | 5.000 tickets | 1.533 diferenças: 717 números de pedido errados, todos com o número da nota fiscal do ticket; 953 de 953 produtos perdidos |
 
 O resultado está em [docs/adr/evidence/large-vs-mini.json](docs/adr/evidence/large-vs-mini.json). Para ver o caso mais grave em segundos (`extract` no `TK-00002`), troque só o `model`:
 
@@ -358,12 +358,14 @@ _A preencher (requisito 6)._
 
 **Arquivo:** [gateway/config.yaml](gateway/config.yaml). Cada destino aponta para um modelo físico por uma âncora YAML (`*openai-large`, `*openai-mini`, `*anthropic-large`, `*anthropic-mini`); endereço, credencial e preço de cada modelo ficam declarados uma vez no topo do arquivo.
 
-**O que alterar:** a âncora do destino. Por exemplo, para a F1 passar a usar o modelo da Anthropic:
+**O que alterar:** a âncora do destino. Por exemplo, para a F1 passar a usar o modelo mais barato da OpenAI, que deu a mesma classificação que o `large` nos 5.000 tickets e custa ~1/17 do preço por token (US$ 0,15 contra 2,50 por 1M de entrada; 0,60 contra 10 por 1M de saída) ([ADR 0004](docs/adr/0004-politica-de-fallback.md)):
 
 ```yaml
   - model_name: ticket-classification
-    litellm_params: { <<: [*anthropic-large, *short-timeout] }   # era *openai-large
+    litellm_params: { <<: [*openai-mini, *short-timeout] }   # era *openai-large
 ```
+
+Ao trocar o **provider** do primário, troque também o do fallback técnico (`ticket-classification-fallback`), para que os dois continuem em providers diferentes, como exige o [ADR 0002](docs/adr/0002-providers-e-teto-de-gasto.md).
 
 **Comando:** reiniciar só o gateway. O `app` não é reconstruído nem reiniciado.
 
@@ -376,16 +378,18 @@ curl -s "localhost:8090/admin/calls?last=1"    # a chamada já aparece no novo m
 docker compose ps app                          # o app continua de pé desde antes da troca
 ```
 
-Testado trocando a F1 para `*openai-mini`. A chamada seguinte apareceu em `/admin/calls` como `openai/gpt-fake-mini`. O container do `app` manteve o mesmo id e o mesmo horário de início.
+Testado com o exemplo acima: a chamada seguinte apareceu em `/admin/calls` como `openai/gpt-fake-mini`, e o container do `app` manteve o mesmo id e o mesmo horário de início. A troca para `*anthropic-large` também foi testada, com o mesmo resultado (`anthropic/claude-fake-large`).
 
 ## Roteiro de governança
 
 As virtual keys são declaradas em [gateway/keys.yaml](gateway/keys.yaml) e criadas na subida do gateway, sem passo manual ([ADR 0006](docs/adr/0006-governanca-de-chaves.md)). Além da chave do app (US$ 100 a cada 30 dias e 600 requisições por minuto), há duas chaves de demonstração com limites pequenos, para a recusa aparecer na hora.
 
-**Recusa por orçamento.** A chave `demo-budget` tem teto de US$ 0,0001, e uma classificação custa ~US$ 0,00014: a 1ª requisição passa e estoura o teto, e as seguintes são recusadas.
+**Recusa por orçamento.** A chave `demo-budget` tem teto de US$ 0,0001, e uma classificação custa ~US$ 0,00014: a 1ª requisição passa e estoura o teto, e as seguintes são recusadas. O roteiro começa zerando o gasto acumulado da chave, com a master key, para ser repetível.
 
 ```sh
 curl -s -X POST localhost:8090/admin/reset
+curl -s -X POST localhost:4000/key/sk-demo-budget-0001/reset_spend \
+  -H "Authorization: Bearer sk-gateway-master-0001" -H "Content-Type: application/json" -d '{"reset_to": 0}'
 for i in 1 2 3; do
   curl -s -w "  -> HTTP %{http_code}\n" localhost:4000/chat/completions \
     -H "Authorization: Bearer sk-demo-budget-0001" -H "Content-Type: application/json" \
@@ -395,7 +399,7 @@ done
 curl -s "localhost:8090/admin/calls?last=10"   # 1 chamada: as recusadas não chegaram ao provider
 ```
 
-Resultado: 1ª `200`; 2ª e 3ª `429` com `"type": "budget_exceeded"` ("Budget has been exceeded!"). Se a chave já tiver sido usada desde a última subida do zero, a 1ª também é recusada, porque o gasto fica no banco do gateway até um `docker compose down`.
+Resultado: 1ª `200`; 2ª e 3ª `429` com `"type": "budget_exceeded"` ("Budget has been exceeded!"). Sem o `reset_spend`, uma chave já usada recusa também a 1ª, porque o gasto acumulado fica no banco do gateway.
 
 **Recusa por limite de requisições.** A chave `demo-rate-limit` aceita 2 requisições por minuto.
 

@@ -14,8 +14,8 @@ A evidência foi colhida com `scripts/compare_models.py`. O script chamou o prov
 |---|---|---|---|
 | `classify` | 5.000 tickets | **0 diferenças** | ~1,1 s → ~0,4 s |
 | `topics` | os 34 lotes de 150 do mês inteiro | **0 diferenças** | ~9,8 s → ~2,7 s por lote |
-| `suggest` | 200 tickets (1 a cada 25) | 200 diferentes. Texto médio de 2.431 para 1.066 caracteres, **com os mesmos 5 passos distintos** de orientação (média 5,0 nos dois); o `mini` só tem menos parágrafos de reforço | ~16 s → ~2,1 s |
-| `extract` | 5.000 tickets | **1.533 errados (30,7%)**: 717 números de pedido trocados (o `mini` pega o primeiro número de 6 dígitos, que muitas vezes é a nota fiscal; ex.: `TK-00002`, nota fiscal 530720, pedido #605065, `mini` devolve `#530720`) e **953 de 953 produtos perdidos** (o `mini` nunca identifica o produto) | ~1,1 s → ~0,4 s |
+| `suggest` | amostra de 200 tickets (1 a cada 25) | Os 200 textos diferem: tamanho médio de 2.431 para 1.066 caracteres. Mas nos 200, o conjunto de passos distintos de orientação é **exatamente o mesmo** nos dois tamanhos (5 passos), assim como a abertura e o fechamento. O `mini` só tem menos parágrafos de reforço ("Reforçando o ponto N: ...") | ~16 s → ~2,1 s |
+| `extract` | 5.000 tickets | **1.533 errados (30,7%)**: **717 números de pedido errados, e nos 717 o `mini` devolveu o número da nota fiscal citada no próprio ticket** (ex.: `TK-00002`, nota fiscal 530720 e pedido #605065, o `mini` devolve `#530720`). Além disso, **953 de 953 produtos perdidos**: o `mini` não identificou o produto em nenhum ticket que o cita | ~1,1 s → ~0,4 s |
 
 ## Opções consideradas
 
@@ -31,7 +31,7 @@ O cliente espera a confirmação na tela, e a saída é curta e de valores fixos
 
 ### F2 Sugerir resposta: aceita o modelo fraco
 
-Quem consome é um atendente, que lê e edita o texto antes de enviar (há revisão humana). O texto do `mini` tem menos da metade do tamanho, mas cobre os mesmos 5 passos de orientação; perde só as repetições. Uma sugestão mais curta que o atendente completa é melhor que uma tela vazia. Sem `large`: **`200` com a sugestão do `claude-fake-mini`**.
+Quem consome é um atendente, que lê e edita o texto antes de enviar (há revisão humana). O texto do `mini` tem menos da metade do tamanho, mas, nos 200 tickets da amostra, traz exatamente os mesmos passos de orientação, a mesma abertura e o mesmo fechamento; perde só as repetições. Uma sugestão mais curta que o atendente completa é melhor que uma tela vazia. Sem `large`: **`200` com a sugestão do `claude-fake-mini`**.
 
 ### F3 Relatório de temas: aceita o modelo fraco
 
@@ -39,7 +39,7 @@ Ninguém está esperando, e o relatório inteiro sai igual com o `mini`: 0 difer
 
 ### F4 Extrair dados do pedido: não aceita o modelo fraco
 
-A saída alimenta uma automação de troca e devolução **sem revisão humana**. O `mini` erra 30,7% das extrações: em 14,3% dos tickets ele troca o número do pedido pelo da nota fiscal, e perde o produto em todos os tickets que citam um. Cada erro vira uma troca errada, que custa frete, estoque e cliente, e ninguém revisa antes. Uma falha explícita deixa o ticket para tratamento posterior. Sem `large`: **`503` com `{"detail", "capability": "order-extraction", "reason"}`**, sem chamar o `mini`. O gateway nem tem um destino fraco para essa capacidade.
+A saída alimenta uma automação de troca e devolução **sem revisão humana**. O `mini` erra 30,7% das extrações: em 14,3% dos tickets (717) ele devolve o número da nota fiscal no lugar do pedido, e perde o produto em todos os tickets que citam um. Cada erro vira uma troca errada, que custa frete, estoque e cliente, e ninguém revisa antes. Uma falha explícita deixa o ticket para tratamento posterior. Sem `large`: **`503` com `{"detail", "capability": "order-extraction", "reason"}`**, sem chamar o `mini`. O gateway nem tem um destino fraco para essa capacidade.
 
 ## Consequências
 

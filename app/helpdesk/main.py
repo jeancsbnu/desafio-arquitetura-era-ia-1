@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from .classification import TicketClassifier
 from .extraction import OrderExtractor
 from .gateway import GatewayLanguageModel
-from .ports import ModelUnavailable
+from .ports import ModelRejectedInput, ModelUnavailable
 from .report import TopicsReporter
 from .schemas import (Classification, OrderData, PeriodInput, ReplySuggestion, TicketInput,
                       TopicsReport)
@@ -33,6 +33,16 @@ def model_unavailable(request: Request, error: ModelUnavailable) -> JSONResponse
     """Falha explícita: nenhum destino da capacidade respondeu (ADR de fallback)."""
     return JSONResponse(status_code=503, content={
         "detail": "Nenhum modelo disponível para atender a requisição. Tente novamente em instantes.",
+        "capability": error.capability,
+        "reason": error.reason,
+    })
+
+
+@app.exception_handler(ModelRejectedInput)
+def model_rejected_input(request: Request, error: ModelRejectedInput) -> JSONResponse:
+    """A entrada não pode ser processada por nenhum destino (ex.: texto maior que o contexto)."""
+    return JSONResponse(status_code=422, content={
+        "detail": "O texto não pode ser processado pelo modelo (por exemplo, é longo demais).",
         "capability": error.capability,
         "reason": error.reason,
     })

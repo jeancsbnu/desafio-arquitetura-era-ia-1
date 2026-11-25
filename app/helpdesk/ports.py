@@ -19,13 +19,23 @@ class ModelUnavailable(Exception):
         self.reason = reason
 
 
+class ModelRejectedInput(Exception):
+    """Os destinos da capacidade recusaram a entrada (ex.: maior que o contexto do modelo).
+    Tentar de novo não adianta: é a entrada que precisa mudar."""
+
+    def __init__(self, capability: str, reason: str):
+        super().__init__(f"{capability}: {reason}")
+        self.capability = capability
+        self.reason = reason
+
+
 class LanguageModel(Protocol):
     """Gera texto para uma capacidade lógica. Qual modelo físico responde é decisão do gateway."""
 
     @abstractmethod
     def complete(self, capability: str, prompt: str, timeout: float) -> str:
-        """Devolve o texto gerado, ou levanta ModelUnavailable se não houver resposta em `timeout`
-        segundos."""
+        """Devolve o texto gerado. Levanta ModelUnavailable se não houver resposta em `timeout`
+        segundos, e ModelRejectedInput se os destinos recusarem a entrada."""
 
 
 class TicketSource(Protocol):

@@ -26,7 +26,7 @@ LiteLLM Proxy, imagem `ghcr.io/berriai/litellm:v1.102.1`, como serviço `gateway
 
 - O `app` fala com o gateway pelo SDK `openai`, no formato da OpenAI, qualquer que seja o provider por trás. O único componente que faz isso é `app/helpdesk/gateway.py`, e só `main.py` o importa.
 - A configuração é versionada em `gateway/`: `config.yaml` (destinos, preços, timeouts, retries, fallbacks) e `keys.yaml` (virtual keys).
-- As chaves dos providers chegam só ao serviço `gateway`. O `app` recebe apenas `GATEWAY_URL` e a sua virtual key.
+- As chaves dos providers chegam só ao serviço `gateway`. O `app` recebe apenas `GATEWAY_URL` e a sua virtual key. Nenhum serviço usa `env_file`: cada um recebe no `compose.yaml` só as variáveis de que precisa. O `provider-fake`, por exemplo, recebe só as duas chaves que aceita, e não a master key nem as virtual keys.
 
 ## Consequências
 

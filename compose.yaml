@@ -1,7 +1,10 @@
 services:
   provider-fake:
     build: ./provider-fake
-    env_file: .env
+    # Só as chaves que o provider simulado aceita; o resto do .env não chega aqui.
+    environment:
+      FAKE_OPENAI_KEY: ${FAKE_OPENAI_KEY}
+      FAKE_ANTHROPIC_KEY: ${FAKE_ANTHROPIC_KEY}
     ports:
       - "8090:8090"
 
@@ -22,9 +25,15 @@ services:
     image: ghcr.io/berriai/litellm:v1.102.1
     # start.sh sobe o LiteLLM e aplica as chaves de keys.yaml, sem passo manual.
     entrypoint: ["/bin/sh", "/gateway/start.sh"]
-    # As chaves dos providers vivem só aqui.
-    env_file: .env
     environment:
+      # As chaves dos providers vivem só aqui.
+      FAKE_OPENAI_KEY: ${FAKE_OPENAI_KEY}
+      FAKE_ANTHROPIC_KEY: ${FAKE_ANTHROPIC_KEY}
+      # Master key (administração e bootstrap) e os valores das virtual keys de keys.yaml.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      HELPDESK_GATEWAY_KEY: ${HELPDESK_GATEWAY_KEY}
+      DEMO_BUDGET_KEY: ${DEMO_BUDGET_KEY}
+      DEMO_RATE_LIMIT_KEY: ${DEMO_RATE_LIMIT_KEY}
       DATABASE_URL: postgresql://litellm:${GATEWAY_DB_PASSWORD}@gateway-db:5432/litellm
       # Usa a tabela de modelos embutida na imagem, sem buscá-la na internet ao subir.
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
@@ -35,9 +44,11 @@ services:
     healthcheck:
       # Saudável só depois que as chaves virtuais foram aplicadas.
       test: ["CMD", "python", "-c", "import os, urllib.request; assert os.path.exists('/tmp/keys-ready'); urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')"]
+      # A primeira subida cria o schema do banco (migrações do Prisma): até 5 min de folga.
+      start_period: 300s
       interval: 3s
       timeout: 3s
-      retries: 60
+      retries: 20
     depends_on:
       provider-fake:
         condition: service_healthy

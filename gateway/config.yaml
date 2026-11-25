@@ -84,7 +84,8 @@ router_settings:
     - topics-report: [topics-report-fallback, topics-report-weak]
     - order-extraction: [order-extraction-fallback]
   # Tentativas por destino: falhas transitórias (5xx e 429) têm 1 + 2 retries, com backoff
-  # exponencial; timeout não tem retry (vai direto ao próximo destino). Demais erros: sem retry.
+  # exponencial; timeout não tem retry (vai direto ao próximo destino). Demais erros (4xx): sem
+  # retry, mas o LiteLLM ainda passa pelos destinos seguintes da lista de fallbacks.
   num_retries: 2
   retry_policy:
     InternalServerErrorRetries: 2

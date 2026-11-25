@@ -11,7 +11,7 @@ import logging
 import openai
 from openai import OpenAI
 
-from .ports import LanguageModel, ModelUnavailable
+from .ports import LanguageModel, ModelRejectedInput, ModelUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +33,10 @@ class GatewayLanguageModel(LanguageModel):
             )
         except openai.APITimeoutError as error:
             raise self._unavailable(capability, f"sem resposta do gateway em {timeout:g} s") from error
+        except openai.BadRequestError as error:
+            # 400: os destinos recusaram a entrada (ex.: maior que o contexto). Não é indisponibilidade.
+            log.warning("capacidade %s recusou a entrada: HTTP 400", capability)
+            raise ModelRejectedInput(capability, "a entrada foi recusada pelo modelo (HTTP 400)") from error
         except openai.APIStatusError as error:
             raise self._unavailable(capability, f"gateway respondeu HTTP {error.status_code}") from error
         except openai.APIConnectionError as error:

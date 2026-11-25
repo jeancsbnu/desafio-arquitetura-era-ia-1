@@ -31,7 +31,8 @@ Opção 3, com cada mecanismo num lugar declarado:
 | Timeout por tentativa (segundos sem bytes do provider) | `gateway/config.yaml`, por capacidade | F1 e F4: 5 s. F2: 30 s sem streaming, 5 s até o 1º trecho com streaming. F3: 30 s por lote |
 | Retry de falha transitória (`5xx` e `429`) | `gateway/config.yaml`, `retry_policy` | 2 retries com backoff exponencial do LiteLLM: **até 3 tentativas por destino** |
 | Retry de timeout | `gateway/config.yaml`, `TimeoutErrorRetries: 0` | nenhum: um provider travado não é transitório dentro do orçamento de latência, então vai direto ao próximo destino (**1 tentativa por destino**) |
-| Retry de erro não transitório (`400`, `401`) | `gateway/config.yaml` | nenhum |
+| Retry de erro não transitório (`400`, `401`) | `gateway/config.yaml` | nenhum, **1 tentativa por destino**. O LiteLLM ainda aplica a lista de fallbacks a esses erros: uma entrada maior que o contexto passa pelos 3 destinos, 1 chamada em cada. Tentei desligar isso com `context_window_fallbacks`, mas o LiteLLM não reconhece o `400` do provider simulado como erro de contexto, então a configuração não teve efeito e foi removida |
+| Entrada recusada por todos os destinos (`400` final do gateway) | `app/helpdesk/gateway.py` e `main.py` | o adaptador levanta `ModelRejectedInput`, e `main` responde `422`: tentar de novo não adianta |
 | Ordem dos destinos | `gateway/config.yaml`, `fallbacks` | primário → fallback técnico → modelo fraco (ADR 0004) |
 | Retry no SDK da aplicação | `app/helpdesk/gateway.py` | `max_retries=0`: as tentativas acontecem num lugar só |
 | Prazo total que a feature espera pelo gateway | constante `TIMEOUT_SECONDS` de cada feature | F1 e F4: 14 s. F2: 28 s. F3: 60 s por lote. Estourado o prazo ou esgotados os destinos, o adaptador levanta `ModelUnavailable` e `main` responde `503` explícito |
@@ -52,5 +53,6 @@ Medido pela borda, com `/admin/calls`:
 | Cenário | Resultado | `/admin/calls` |
 |---|---|---|
 | `openai` em `error_500` | F1 `200` em 5,5 s | `gpt-fake-large:500` ×3 e depois `claude-fake-large:200` |
-| `openai` em `timeout` | F1 `200` em 6,3 s; F4 `200` em 6,2 s | `gpt-fake-large` 1 vez (sem retry; o provider registra `504` ao fim dos 300 s) e depois `claude-fake-large:200` |
+| `openai` em `timeout` | F1 `200` em 6,3 s; F4 `200` em 6,2 s | `gpt-fake-large:504` 1 vez e depois `claude-fake-large:200`. Não houve retry. O `504` é o status que o provider vai devolver ao fim dos 300 s; o `/admin/calls` o registra já no recebimento, mas o gateway desistiu em 5 s |
 | Normal | F1 `200` em ~1,1 s | `gpt-fake-large:200` |
+| Entrada de ~16 mil tokens (contexto de 8.000) | gateway `400`; pela borda, F1 `422` | 1 chamada `400` em cada destino (`gpt-fake-large`, `claude-fake-large`, `gpt-fake-mini`) |

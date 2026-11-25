@@ -18,7 +18,7 @@ O gasto esperado, calculado com os preços do provider e os 5.000 tickets de ago
 | F1, classificação de 5.000 tickets | US$ 1,12 |
 | F4, extração de 5.000 tickets | US$ 1,12 |
 | F2, sugestão para 5.000 tickets | US$ 46,13 |
-| F3, relatório do mês (US$ 0,85 cada), um por dia útil (22) | US$ 18,72 |
+| F3, relatório do mês (US$ 0,849 cada), um por dia útil (22) | US$ 18,67 |
 | **Total** | **~US$ 67** |
 
 ## Opções consideradas

@@ -26,7 +26,7 @@ Serviço `gateway-db` com a imagem pública `postgres:16-alpine`:
 ## Consequências
 
 - Melhor: virtual keys, orçamento e gasto por chave funcionam. O schema e as chaves são criados na subida, sem passo manual (ADR 0006).
-- Pior: mais um serviço para operar. A primeira subida do gateway fica mais lenta (~2 a 3 min, com as migrações do Prisma).
+- Pior: mais um serviço para operar. A primeira subida do gateway fica mais lenta (~2 a 3 min, com as migrações do Prisma). Por isso o healthcheck do `gateway` tem `start_period: 300s`, para o `docker compose up --wait` não desistir numa máquina mais lenta.
 - Depois de `docker compose down`, o gasto acumulado volta a zero. As chaves voltam porque são recriadas de `gateway/keys.yaml`. Para um teto mensal real, o volume precisaria ser nomeado e ter backup, o que fica fora do escopo deste ambiente local.
 
 ## Evidência
