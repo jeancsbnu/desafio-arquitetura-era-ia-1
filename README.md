@@ -21,7 +21,7 @@ Trocar o modelo de uma feature é editar `gateway/config.yaml` e reiniciar só o
 Cada feature é entregue no modo que o seu contrato pede ([ADR 0008](docs/adr/0008-modo-de-execucao.md)):
 
 - **F1 (classificação) e F4 (extração):** síncronas, porque respondem em ~1,1 s.
-- **F2 (sugestão):** chega por streaming (Server-Sent Events). O atendente vê o 1º trecho em menos de 1 s, e não depois de 16 s.
+- **F2 (sugestão):** chega por streaming (Server-Sent Events). Com o provider normal, o atendente vê o 1º trecho em menos de 1 s, e não depois de 16 s. Quando o gateway precisa recorrer ao fallback, o 1º trecho atrasa (de ~5 a ~10 s, conforme a falha; ver "Fluxos").
 - **F3 (relatório):** assíncrona. O pedido do mês é aceito em milissegundos com `202`, e o relatório completo fica disponível depois, pela URL de status.
 
 Nenhuma requisição termina em `504` da borda, nem com o provider fora ou travado.
@@ -426,6 +426,16 @@ curl -s -X POST localhost:8090/admin/reset
 
 Uma falha antes do 1º trecho (nenhum destino disponível) ainda vira status HTTP: `503`, ou `422` se a entrada for recusada.
 
+Quando o gateway precisa de outro destino, ele troca antes do 1º trecho, e o stream chega completo, só mais tarde. Medido pela borda:
+
+| Situação do provider | 1º trecho | Quem responde |
+|---|---|---|
+| normal | ~0,9 s | `claude-fake-large` |
+| `anthropic` em `error_500` | ~5,2 s (3 tentativas com backoff) | `gpt-fake-large` |
+| `anthropic` em `timeout` | ~6,0 s (1 tentativa cortada em 5 s) | `gpt-fake-large` |
+| os dois `large` em `error_500` | ~10,4 s (3 + 3 tentativas) | `claude-fake-mini` |
+| `anthropic` em `midstream_error` | ~0,9 s, e o stream termina em `event: error` | não há fallback depois que o texto começou: o gateway não troca de destino no meio do stream |
+
 ### F3 Relatório de temas: assíncrono (Asynchronous Request-Reply)
 
 O pedido é aceito na hora com `202`, `Location` e `Retry-After`. Consulte a URL de status até ela responder `303 See Other`, que aponta para o relatório. O mês inteiro leva ~6 min.
@@ -458,7 +468,18 @@ done
 curl -s -L "localhost:8000$LOC" | head -c 300
 ```
 
-Erros de entrada continuam síncronos: `422` para `start` depois de `end`, data inválida ou campo faltando. Um id desconhecido dá `404`, e pedir o resultado antes do fim dá `409`. As tarefas ficam na memória do `app` e somem se ele reiniciar.
+Erros de entrada continuam síncronos: `422` para `start` depois de `end`, data inválida ou campo faltando. Um id desconhecido dá `404`, e pedir o resultado antes do fim dá `409`.
+
+Limites da F3:
+- **Memória:** as tarefas ficam na memória do `app` e somem se ele reiniciar; as 100 últimas terminadas continuam consultáveis.
+- **Fila:** até 4 relatórios rodam ao mesmo tempo, e um 5º espera `pending`. O prazo de 60 s para chegar a `failed` conta a partir do início da execução: medido com os dois providers em `error_500`, de 14 a 17 s; em `timeout`, ~46 s.
+
+### Campos além dos "Contratos sugeridos"
+
+- O `202` da F3 traz o corpo `{"task_id", "state": "pending"}`, além dos headers do contrato.
+- O status da F3 em `running` pode trazer `progress` (tickets processados / total), como no exemplo do enunciado.
+- Quando nenhum destino responde, as respostas `503` (F1, F2 antes do 1º trecho e F4) trazem `{"detail", "capability", "reason"}`. O `422` de entrada recusada pelo modelo traz o mesmo formato. `capability` é o nome lógico, e `reason` diz o que o gateway respondeu.
+- O `reason` de uma tarefa da F3 em `failed` tem a forma `"<capacidade>: <motivo>"`, por exemplo `"topics-report: gateway respondeu HTTP 500"`.
 
 ### F4 Extrair dados do pedido: síncrono
 

@@ -52,6 +52,14 @@ Decisões de interpretação da régua, que valem para as três medições e est
 - `gateway` e `tickets` têm I exatamente 0,50 e D 0,50, por serem adaptadores com um dependente (`main`) e uma dependência (a porta).
 - A Revisão 1 do plano de refatoração registra que declarar a porta foi motivado pela métrica, e o que isso ganhou além do número.
 - Um adaptador novo nesse formato também cai na fronteira. Ela deve ser lida como "detalhe que depende da abstração", não como alvo a otimizar.
+- Eles só ficam fora da zona porque a régua usa desigualdade estrita (I < 0,5). Quem lesse com I ≤ 0,5 os encontraria na zona de dor, inclusive o componente que chama o gateway.
+
+A defesa da estrutura não depende do número. Os adaptadores são concretos e voláteis por natureza (mudam quando o SDK, o gateway ou o arquivo mudam). Isso é aceitável porque:
+- só o ponto de composição depende deles, e nenhuma feature;
+- eles dependem da abstração que implementam, e não o contrário;
+- se faltar um método da porta, a aplicação não sobe (`@abstractmethod`).
+
+A dor que a zona descreve é "muitos dependem de algo concreto que muda". Na v1 era o caso de `llm` (Ca 4) e `config` (Ca 6), e com um adaptador de Ca 1 isso não acontece.
 
 **Limite da leitura:** a métrica conta imports, não o peso deles. Ela não captura, por exemplo, que `main` concentra a composição e as rotas HTTP. A métrica aponta onde olhar; quem diz se a estrutura melhorou são os ADRs e os testes.
 

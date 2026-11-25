@@ -9,6 +9,7 @@ um processo (o uvicorn sobe um só).
 import logging
 import threading
 import uuid
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -22,11 +23,13 @@ log = logging.getLogger(__name__)
 class ThreadTaskRunner(TaskRunner):
     """Declara a porta que implementa."""
 
-    def __init__(self, max_workers: int):
+    def __init__(self, max_workers: int, keep_finished: int):
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="task")
         self._lock = threading.Lock()
         self._status: dict[str, TaskStatus] = {}
         self._results: dict[str, Any] = {}
+        self._finished: deque[str] = deque()   # as mais antigas saem quando passa de keep_finished
+        self._keep_finished = keep_finished
 
     def submit(self, work: Callable[[Progress], Any]) -> str:
         task_id = uuid.uuid4().hex[:12]
@@ -49,12 +52,21 @@ class ThreadTaskRunner(TaskRunner):
             result = work(lambda progress: self._set(task_id, TaskStatus(state="running", progress=progress)))
         except Exception as error:  # nenhuma tarefa fica presa em `running`
             log.warning("tarefa %s falhou: %s", task_id, error)
-            self._set(task_id, TaskStatus(state="failed", reason=str(error) or type(error).__name__))
+            self._finish(task_id, TaskStatus(state="failed", reason=str(error) or type(error).__name__))
             return
-        with self._lock:
-            self._results[task_id] = result
-            self._status[task_id] = TaskStatus(state="done")
+        self._finish(task_id, TaskStatus(state="done"), result)
 
     def _set(self, task_id: str, status: TaskStatus) -> None:
         with self._lock:
             self._status[task_id] = status
+
+    def _finish(self, task_id: str, status: TaskStatus, result: Any = None) -> None:
+        with self._lock:
+            self._status[task_id] = status
+            if result is not None:
+                self._results[task_id] = result
+            self._finished.append(task_id)
+            while len(self._finished) > self._keep_finished:
+                oldest = self._finished.popleft()
+                self._status.pop(oldest, None)
+                self._results.pop(oldest, None)

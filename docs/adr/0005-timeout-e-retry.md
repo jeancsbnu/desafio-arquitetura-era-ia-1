@@ -40,6 +40,12 @@ Opção 3, com cada mecanismo num lugar declarado:
 
 O prazo da F1 e da F4 (14 s) cobre o pior caso da cadeia de timeouts: 5 s no primário, mais 5 s no fallback, mais o modelo fraco. Ele também garante a resposta em até 15 s mesmo quando todos os destinos travam.
 
+**As margens são pequenas, de propósito.** Os prazos foram calculados a partir dos limites do enunciado, e não de uma folga confortável:
+- com os dois providers travados, a F1 responde `503` em ~14,0 s e a F4 em ~10,1 s, contra 15 s;
+- a tarefa da F3 vai a `failed` em ~46 s, contra 60 s.
+
+Aumentar um timeout de destino ou o número de destinos exige refazer essas contas.
+
 ## Consequências
 
 - Melhor: o número de tentativas é limitado, previsível e declarado (3 por destino em falha transitória, 1 em timeout). Uma falha gera 3 chamadas por destino, como na v1, e não 9. Um provider travado custa 5 s à F1, e não 15 min.

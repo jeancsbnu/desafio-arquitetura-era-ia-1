@@ -23,7 +23,8 @@ language_model = GatewayLanguageModel(
     api_key=os.environ["GATEWAY_API_KEY"],
 )
 ticket_source = JsonlTicketSource(os.environ.get("TICKETS_FILE", "/data/tickets.jsonl"))
-task_runner = ThreadTaskRunner(max_workers=2)
+# 4 relatórios ao mesmo tempo; os 100 últimos terminados continuam consultáveis.
+task_runner = ThreadTaskRunner(max_workers=4, keep_finished=100)
 
 classifier = TicketClassifier(language_model)
 suggester = ReplySuggester(language_model)

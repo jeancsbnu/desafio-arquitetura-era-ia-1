@@ -49,15 +49,25 @@ def test_f2_first_chunk_within_1_5_s_and_before_half_of_total(client, provider):
     assert events[-1][:2] == ("end", {"ticket_id": "TK-00042"})
 
 
-def test_f3_accepts_month_within_1_s_and_reports_progress(client, provider):
+def assert_accepted_within_1_s(client, period):
     start = time.perf_counter()
-    response = client.post("/reports/topics", json=MONTH)
+    response = client.post("/reports/topics", json=period)
     assert time.perf_counter() - start <= 1
     assert response.status_code == 202
     assert response.headers["location"].startswith("/reports/topics/status/")
     assert response.headers["retry-after"] == "5"
     status = client.get(response.headers["location"])
     assert status.status_code == 200 and status.json()["state"] in ("pending", "running")
+    return response.headers["location"]
+
+
+def test_f3_accepts_request_within_1_s_and_redirects_to_the_result(client, provider):
+    # Um dia, e o teste espera a tarefa terminar: nenhuma tarefa fica rodando para o teste seguinte.
+    # O mês inteiro (o critério do enunciado) é o teste `slow` no fim do arquivo.
+    location = assert_accepted_within_1_s(client, DAY)
+    final, _ = wait_status(client, location, timeout=60)
+    assert final.status_code == 303
+    assert client.get(final.headers["location"]).json()["total_tickets"] == 137
 
 
 # --- Falhas do provider -------------------------------------------------------------------------
@@ -121,12 +131,12 @@ def test_without_large_models_each_feature_follows_the_fallback_table(client, pr
 # --- Relatório do mês inteiro (~6 min) ----------------------------------------------------------
 
 @pytest.mark.slow
-def test_f3_month_report_covers_5000_tickets(client, provider):
-    response = client.post("/reports/topics", json=MONTH)
-    final, _ = wait_status(client, response.headers["location"], timeout=900)
+def test_f3_month_accepted_within_1_s_and_report_covers_5000_tickets(client, provider):
+    location = assert_accepted_within_1_s(client, MONTH)
+    final, _ = wait_status(client, location, timeout=900)
     assert final.status_code == 303, final.text
     report = client.get(final.headers["location"])
     assert report.status_code == 200 and report.json()["total_tickets"] == 5000
-    # 5.000 tickets em lotes de 150 = 34 chamadas. "Pelo menos": um relatório pedido por outro
-    # teste (o do 202) pode ainda estar rodando em segundo plano, e o provider não distingue tarefas.
-    assert len(provider.calls("topics")) >= 34
+    # 5.000 tickets em lotes de 150 = 34 chamadas `topics`, todas registradas em /admin/calls.
+    # Nenhum teste anterior deixa tarefa rodando, então não há chamada de outro relatório.
+    assert provider.calls("topics") == [("claude-fake-large", 200)] * 34

@@ -51,6 +51,13 @@ O app abre a conexão com o gateway já na subida. Sem isso, a 1ª requisição 
 
 Streaming muda a espera percebida, mas não a duração: a conexão fica aberta os ~16 s. É aceitável, porque há alguém lendo durante todo esse tempo, e os trechos chegam a cada ~25 ms, muito antes dos 30 s da borda.
 
+O 1º trecho em menos de 1 s vale com o provider normal. Quando o gateway precisa de outro destino, a troca acontece antes do 1º trecho, e ele atrasa:
+- ~5,2 s com o primário em `error_500`;
+- ~6,0 s com o primário travado;
+- ~10,4 s sem nenhum `large`.
+
+Depois que o texto começou, não há troca de destino: uma falha no meio do stream vira o evento `error`. Isso é o que o contrato pede, porque o atendente já está lendo um texto que não pode ser emendado com o de outro modelo.
+
 ### F3 Relatório de temas: assíncrona (Asynchronous Request-Reply)
 
 - **Alguém está esperando agora?** Não: quem pede é um painel interno no navegador, e "ninguém fica esperando olhando para ele".
@@ -62,12 +69,14 @@ O painel não expõe callback, então o padrão é Asynchronous Request-Reply:
 - a URL de status responde `200` com `{"state": "pending"|"running", "progress": "1800/5000"}`, ou `{"state": "failed", "reason": ...}`;
 - quando a tarefa termina, a URL de status responde `303 See Other` para `/reports/topics/{id}`, que devolve o relatório.
 
-A tarefa roda num pool de 2 threads dentro do próprio `app` (adaptador `background.py`, porta `TaskRunner`), com o estado em memória. **Nenhum serviço novo** entra no compose (fila, banco, worker): para o volume do helpdesk, um relatório por vez basta, e o enunciado deixa fora do escopo sobreviver a um reinício com tarefas em andamento.
+A tarefa roda num pool de 4 threads dentro do próprio `app` (adaptador `background.py`, porta `TaskRunner`), com o estado em memória, e as 100 últimas tarefas terminadas continuam consultáveis. **Nenhum serviço novo** entra no compose (fila, banco, worker): para o volume do helpdesk, poucos relatórios ao mesmo tempo bastam, e o enunciado deixa fora do escopo sobreviver a um reinício com tarefas em andamento.
 
 Para que uma tarefa que não consegue terminar chegue a `failed` em até 60 s:
 - cada lote tem prazo de 50 s no app;
 - no gateway, cada destino tem 15 s por tentativa (até 3 destinos);
 - qualquer exceção do trabalho leva a tarefa a `failed`, com o motivo. Nenhuma fica presa em `running`.
+
+Os 60 s contam do início da execução. Um 5º pedido simultâneo espera `pending` até um dos 4 terminar. Com os providers fora, cada tarefa falha em 14 a 17 s (`error_500`) ou em ~46 s (`timeout`), então essa espera só aparece com mais de 4 relatórios pedidos ao mesmo tempo.
 
 ### F4 Extrair dados do pedido: síncrona
 
@@ -83,7 +92,8 @@ Síncrona, com prazo de 14 s e falha explícita (`503`) sem modelo `large` (ADR 
 - Pior:
   - a F2 mantém a conexão aberta durante toda a geração;
   - a F3 passa a ter estado (as tarefas) e um protocolo de consulta que o cliente precisa seguir;
-  - o estado das tarefas vive na memória de um único processo: some num reinício e não funcionaria com várias réplicas do `app` sem um armazenamento compartilhado.
+  - o estado das tarefas vive na memória de um único processo: some num reinício e não funcionaria com várias réplicas do `app` sem um armazenamento compartilhado;
+  - uma tarefa não pode ser cancelada: um relatório pedido e abandonado roda até o fim. Pedidos repetidos para o mesmo período não são deduplicados, o que o enunciado deixa fora do escopo.
 - O contrato da F2 e da F3 mudou. Por isso, na `main`, a suíte de caracterização foi atualizada para o contrato novo. O conteúdo continua o mesmo: o texto concatenado da F2 e o relatório da F3 batem com os gravados da v1. Na `v1-coupled` e na `v2-decoupled`, a suíte é a original.
 
 ## Evidência
@@ -97,5 +107,6 @@ Medido pela borda (`localhost:8000`); `tests/flows/test_flows.py` repete cada it
 | F2, `anthropic` em `midstream_error` | `200`, 151 trechos e depois `event: error` / `{"ticket_id": "TK-00042", "message": "A geração foi interrompida"}`; 1 chamada no provider |
 | F2, `anthropic` em `error_500` / em `timeout` | stream completo pelo `gpt-fake-large`; 1º trecho em 5,2 s / 6,0 s |
 | F3, mês inteiro | `202` em 0,02–0,04 s, com `Location` e `Retry-After: 5`; status `running` com `progress` de 150 em 150 tickets; `303` aos 345 s e relatório com `total_tickets` 5000, produzido por chamadas `topics` registradas em `/admin/calls` (34 lotes de 150) |
-| F3, os dois providers em `error_500` | `failed` com `reason` em 14,3 s |
+| F3, os dois providers em `error_500` | `failed` com `reason` em 14,3 s (17 s na revisão independente) |
+| F3, os dois providers em `timeout` | `failed` com `reason` em ~46 s |
 | F1, `openai` em `timeout` | `200` em 6,1 s, pelo fallback |
