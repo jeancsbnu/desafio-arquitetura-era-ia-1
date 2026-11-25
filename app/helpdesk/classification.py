@@ -6,6 +6,8 @@ from .ports import LanguageModel
 from .schemas import Classification, TicketInput
 
 CAPABILITY = "ticket-classification"
+# Orçamento de latência: o cliente espera a confirmação na tela; resposta ou erro em até 15 s.
+TIMEOUT_SECONDS = 14
 CATEGORIES = {"delivery", "payment", "exchange_return", "product_defect", "other"}
 PRIORITIES = {"low", "medium", "high"}
 
@@ -15,7 +17,7 @@ class TicketClassifier:
         self._model = model
 
     def classify(self, ticket: TicketInput) -> Classification:
-        text = self._model.complete(CAPABILITY, f"TASK: classify\n{ticket.text}")
+        text = self._model.complete(CAPABILITY, f"TASK: classify\n{ticket.text}", TIMEOUT_SECONDS)
         data = json.loads(text)
         if data.get("category") not in CATEGORIES or data.get("priority") not in PRIORITIES:
             raise HTTPException(status_code=502, detail="Classificação fora dos valores permitidos")

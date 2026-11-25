@@ -1,40 +1,102 @@
 # AI Gateway (LiteLLM Proxy).
 #
-# A aplicação só conhece os nomes lógicos (`model_name`): uma capacidade por feature. O modelo
-# físico, o provider, a credencial e os parâmetros que dependem do provider ficam aqui. Trocar o
-# modelo de uma capacidade é alterar este arquivo e reiniciar só o serviço `gateway`.
+# A aplicação só conhece as 4 capacidades lógicas (uma por feature). O modelo físico, o provider,
+# a credencial, o preço e os parâmetros que dependem do provider ficam aqui.
+#
+# Troca de modelo: mude a âncora (`<<: *...`) do destino desejado e reinicie só o gateway:
+#   docker compose restart gateway
+
+# --- Modelos físicos: endereço, credencial e preço (US$ por token, da tabela do provider-fake) ---
+x-models:
+  openai-large: &openai-large
+    model: openai/gpt-fake-large
+    api_base: http://provider-fake:8090/openai/v1
+    api_key: os.environ/FAKE_OPENAI_KEY
+    input_cost_per_token: 0.0000025
+    output_cost_per_token: 0.00001
+  openai-mini: &openai-mini
+    model: openai/gpt-fake-mini
+    api_base: http://provider-fake:8090/openai/v1
+    api_key: os.environ/FAKE_OPENAI_KEY
+    input_cost_per_token: 0.00000015
+    output_cost_per_token: 0.0000006
+  anthropic-large: &anthropic-large
+    model: anthropic/claude-fake-large
+    api_base: http://provider-fake:8090/anthropic
+    api_key: os.environ/FAKE_ANTHROPIC_KEY
+    max_tokens: 2000                         # o formato Messages exige max_tokens
+    input_cost_per_token: 0.000003
+    output_cost_per_token: 0.000015
+  anthropic-mini: &anthropic-mini
+    model: anthropic/claude-fake-mini
+    api_base: http://provider-fake:8090/anthropic
+    api_key: os.environ/FAKE_ANTHROPIC_KEY
+    max_tokens: 2000
+    input_cost_per_token: 0.0000008
+    output_cost_per_token: 0.000004
+
+# --- Timeout por tentativa, por capacidade (segundos sem receber bytes do provider) ---
+x-timeouts:
+  short: &short-timeout        # F1 e F4: respondem em ~1,1 s; o cliente espera na tela
+    timeout: 5
+  suggestion: &suggestion-timeout   # F2: ~16 s sem streaming; com streaming, 5 s até o 1º trecho
+    timeout: 30
+    stream_timeout: 5
+  report: &report-timeout      # F3: ~10 s por lote de 150 tickets, em segundo plano
+    timeout: 30
 
 model_list:
-  - model_name: ticket-classification        # F1
-    litellm_params:
-      model: openai/gpt-fake-large
-      api_base: http://provider-fake:8090/openai/v1
-      api_key: os.environ/FAKE_OPENAI_KEY
+  # F1 Classificar ticket. Destinos: primário, fallback técnico, modelo fraco.
+  - model_name: ticket-classification
+    litellm_params: { <<: [*openai-large, *short-timeout] }
+  - model_name: ticket-classification-fallback
+    litellm_params: { <<: [*anthropic-large, *short-timeout] }
+  - model_name: ticket-classification-weak
+    litellm_params: { <<: [*openai-mini, *short-timeout] }
 
-  - model_name: reply-suggestion             # F2
-    litellm_params:
-      model: anthropic/claude-fake-large
-      api_base: http://provider-fake:8090/anthropic
-      api_key: os.environ/FAKE_ANTHROPIC_KEY
-      max_tokens: 2000                       # o formato Messages exige max_tokens
+  # F2 Sugerir resposta. Destinos: primário, fallback técnico, modelo fraco.
+  - model_name: reply-suggestion
+    litellm_params: { <<: [*anthropic-large, *suggestion-timeout] }
+  - model_name: reply-suggestion-fallback
+    litellm_params: { <<: [*openai-large, *suggestion-timeout] }
+  - model_name: reply-suggestion-weak
+    litellm_params: { <<: [*anthropic-mini, *suggestion-timeout] }
 
-  - model_name: topics-report                # F3
-    litellm_params:
-      model: anthropic/claude-fake-large
-      api_base: http://provider-fake:8090/anthropic
-      api_key: os.environ/FAKE_ANTHROPIC_KEY
-      max_tokens: 2000
+  # F3 Relatório de temas. Destinos: primário, fallback técnico, modelo fraco.
+  - model_name: topics-report
+    litellm_params: { <<: [*anthropic-large, *report-timeout] }
+  - model_name: topics-report-fallback
+    litellm_params: { <<: [*openai-large, *report-timeout] }
+  - model_name: topics-report-weak
+    litellm_params: { <<: [*anthropic-mini, *report-timeout] }
 
-  - model_name: order-extraction             # F4
-    litellm_params:
-      model: openai/gpt-fake-large
-      api_base: http://provider-fake:8090/openai/v1
-      api_key: os.environ/FAKE_OPENAI_KEY
+  # F4 Extrair dados do pedido. Sem modelo fraco: sem `large`, falha explícita (ADR de fallback).
+  - model_name: order-extraction
+    litellm_params: { <<: [*openai-large, *short-timeout] }
+  - model_name: order-extraction-fallback
+    litellm_params: { <<: [*anthropic-large, *short-timeout] }
 
 router_settings:
-  # 1 tentativa + 2 retries por requisição, o mesmo total da v1. Declarado aqui para não depender
-  # do padrão da versão da imagem. Timeout, backoff e fallback entram no requisito 5.
+  # Ordem dos destinos de cada capacidade. Só os nomes da esquerda são chamados pela aplicação.
+  fallbacks:
+    - ticket-classification: [ticket-classification-fallback, ticket-classification-weak]
+    - reply-suggestion: [reply-suggestion-fallback, reply-suggestion-weak]
+    - topics-report: [topics-report-fallback, topics-report-weak]
+    - order-extraction: [order-extraction-fallback]
+  # Tentativas por destino: falhas transitórias (5xx e 429) têm 1 + 2 retries, com backoff
+  # exponencial; timeout não tem retry (vai direto ao próximo destino). Demais erros: sem retry.
   num_retries: 2
+  retry_policy:
+    InternalServerErrorRetries: 2
+    RateLimitErrorRetries: 2
+    TimeoutErrorRetries: 0
+    BadRequestErrorRetries: 0
+    AuthenticationErrorRetries: 0
+    ContentPolicyViolationErrorRetries: 0
+  # Sem cooldown (circuit breaker): cada requisição percorre os destinos na ordem acima,
+  # e o comportamento fica igual em toda requisição.
+  disable_cooldowns: true
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

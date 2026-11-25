@@ -1,10 +1,12 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from .classification import TicketClassifier
 from .extraction import OrderExtractor
 from .gateway import GatewayLanguageModel
+from .ports import ModelUnavailable
 from .report import TopicsReporter
 from .schemas import (Classification, OrderData, PeriodInput, ReplySuggestion, TicketInput,
                       TopicsReport)
@@ -24,6 +26,16 @@ extractor = OrderExtractor(language_model)
 reporter = TopicsReporter(language_model, ticket_source)
 
 app = FastAPI(title="Helpdesk")
+
+
+@app.exception_handler(ModelUnavailable)
+def model_unavailable(request: Request, error: ModelUnavailable) -> JSONResponse:
+    """Falha explícita: nenhum destino da capacidade respondeu (ADR de fallback)."""
+    return JSONResponse(status_code=503, content={
+        "detail": "Nenhum modelo disponível para atender a requisição. Tente novamente em instantes.",
+        "capability": error.capability,
+        "reason": error.reason,
+    })
 
 
 @app.get("/health")

@@ -6,6 +6,8 @@ from .ports import LanguageModel, TicketSource
 from .schemas import PeriodInput, Topic, TopicsReport
 
 CAPABILITY = "topics-report"
+# Prazo por lote (~10 s no modelo large).
+TIMEOUT_SECONDS = 60
 TICKETS_PER_CALL = 150
 
 
@@ -25,7 +27,7 @@ class TopicsReporter:
         for first in range(0, len(selected), TICKETS_PER_CALL):
             batch = selected[first:first + TICKETS_PER_CALL]
             content = "\n".join(f"[{t['id']}] {t['text']}" for t in batch)
-            answer = json.loads(self._model.complete(CAPABILITY, f"TASK: topics\n{content}"))
+            answer = json.loads(self._model.complete(CAPABILITY, f"TASK: topics\n{content}", TIMEOUT_SECONDS))
             for item in answer["topics"]:
                 current = totals.setdefault(item["topic"], {"count": 0, "examples": []})
                 current["count"] += item["count"]

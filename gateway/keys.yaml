@@ -1,0 +1,24 @@
+# Chaves virtuais do gateway. Aplicadas na subida do serviço `gateway` por bootstrap_keys.py
+# (cria o que não existe e atualiza o que existe), sem passo manual. O valor de cada chave vem do
+# ambiente do gateway (.env); orçamento em US$, calculado com os preços de config.yaml.
+
+keys:
+  # A aplicação do helpdesk. Só alcança as 4 capacidades; os destinos de fallback são internos.
+  - alias: helpdesk-app
+    key: os.environ/HELPDESK_GATEWAY_KEY
+    models: [ticket-classification, reply-suggestion, topics-report, order-extraction]
+    max_budget: 100.0          # teto mensal de gasto com IA do helpdesk (ADR de governança)
+    budget_duration: 30d
+    rpm_limit: 600             # 10 requisições por segundo, folga sobre o pico do atendimento
+
+  # Chaves do roteiro de governança do README: limites pequenos para a recusa aparecer na hora.
+  - alias: demo-budget
+    key: os.environ/DEMO_BUDGET_KEY
+    models: [ticket-classification]
+    max_budget: 0.0001         # ~1 classificação (US$ 0,00016) já estoura
+    budget_duration: 30d
+
+  - alias: demo-rate-limit
+    key: os.environ/DEMO_RATE_LIMIT_KEY
+    models: [ticket-classification]
+    rpm_limit: 2               # a 3ª requisição no mesmo minuto é recusada

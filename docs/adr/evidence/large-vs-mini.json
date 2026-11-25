@@ -1,0 +1,84 @@
+{
+  "classify": {
+    "tickets": 5000,
+    "different": 0,
+    "examples": []
+  },
+  "extract": {
+    "tickets": 5000,
+    "different": 1533,
+    "examples": [
+      [
+        "TK-00002",
+        {
+          "order_number": "#605065",
+          "product": null
+        },
+        {
+          "order_number": "#530720",
+          "product": null
+        }
+      ],
+      [
+        "TK-00007",
+        {
+          "order_number": null,
+          "product": "notebook 14 polegadas"
+        },
+        {
+          "order_number": null,
+          "product": null
+        }
+      ],
+      [
+        "TK-00015",
+        {
+          "order_number": "#972600",
+          "product": null
+        },
+        {
+          "order_number": "#197527",
+          "product": null
+        }
+      ],
+      [
+        "TK-00030",
+        {
+          "order_number": "#687783",
+          "product": "cortina blackout"
+        },
+        {
+          "order_number": "#687783",
+          "product": null
+        }
+      ],
+      [
+        "TK-00031",
+        {
+          "order_number": null,
+          "product": "edredom casal"
+        },
+        {
+          "order_number": null,
+          "product": null
+        }
+      ]
+    ],
+    "wrong_order_number": 717,
+    "missing_product": 953,
+    "large_with_product": 953
+  },
+  "topics": {
+    "batches": 34,
+    "different": 0
+  },
+  "suggest": {
+    "sample": 200,
+    "different": 200,
+    "avg_chars_large": 2431,
+    "avg_chars_mini": 1066,
+    "avg_distinct_steps_large": 5.0,
+    "avg_distinct_steps_mini": 5.0,
+    "example_mini": "Olá! Sinto muito pelo transtorno com a entrega do seu pedido.\n\nAssim que tivermos a posição atualizada, você recebe um aviso por e-mail.\n\nCaso o pedido seja considerado extraviado, fazemos o reenvio sem nenhum custo adicional.\n\nSe preferir, também é possível solicitar o cancelamento com reembolso integral.\n\nJá abri uma solicitação de verificação junto à transportadora responsável pelo envio.\n\nO prazo de retorno da transportadora costuma ser de até dois dias úteis.\n\nReforçando o ponto 1: assim que tivermos a posição atualizada, você recebe um aviso por e-mail.\n\nReforçando o ponto 2: caso o pedido seja considerado extraviado, fazemos o reenvio sem nenhum custo adicional.\n\nReforçando o ponto 3: se preferir, também é possível solicitar o cancelamento com reembolso integral.\n\nReforçando o ponto 4: já abri uma solicitação de verificação junto à transportadora responsável pelo envio.\n\nReforçando o ponto 5: o prazo de retorno da transportadora costuma ser de até dois dias úteis.\n\nFico à disposição para qualquer outra dúvida. Um abraço, equipe de atendimento."
+  }
+}

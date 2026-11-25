@@ -4,7 +4,21 @@
 
 ## Visão geral
 
-_A preencher ao final (requisitos 4 a 7)._
+A aplicação FastAPI do helpdesk não conhece nenhum provider. Cada feature pede uma de quatro capacidades lógicas a um AI Gateway self-hosted (LiteLLM Proxy), por uma porta (`LanguageModel`) que só o adaptador `gateway` implementa. O gateway:
+
+- decide o modelo físico;
+- guarda as credenciais dos providers;
+- aplica orçamento e limite de requisições por virtual key;
+- cuida da resiliência: timeout por tentativa, até 3 tentativas com backoff em falhas transitórias e fallback para o modelo equivalente do outro provider.
+
+Trocar o modelo de uma feature é editar `gateway/config.yaml` e reiniciar só o gateway. As decisões estão no "Mapa de decisões", e a evolução medida, de `v1-coupled` a `v2-decoupled`, em "Métrica".
+
+**Quando um provider cai, nenhuma feature para nem muda de resultado.** O gateway tenta o primário (até 3 vezes em erro `5xx`, uma vez se o provider travar) e passa ao modelo `large` equivalente do outro provider. Se nenhum `large` estiver disponível:
+
+- **classificação, sugestão e relatório** respondem com o modelo `mini`, cuja saída foi medida como suficiente para cada uma;
+- **extração de pedido** falha explicitamente com `503`, porque alimenta uma automação sem revisão humana e o `mini` erra 30% das extrações.
+
+_O modo de execução de cada feature (requisito 6) entra aqui quando estiver implementado._
 
 ## Diagnóstico da v1
 
@@ -169,7 +183,7 @@ Causa:
 - `app/helpdesk/config.py:10-13`: o nome do modelo físico é uma constante no código-fonte, não uma configuração. E não só o nome: `config.py:3-7` também fixa as chaves e as base URLs de cada provider, e `llm.py:13-26` fixa o formato de API de cada um. Trocar para um modelo de outro provider exige ainda mudar a função chamada em cada feature (`classification.py:11`, `extraction.py:12`, `suggestion.py:6`, `report.py:18`).
 - `app/Dockerfile:6`: `COPY helpdesk ./helpdesk` congela o código na imagem. As chaves já chegam pelo ambiente (`env_file: .env` no `compose.yaml`, lidas em `config.py:3-4`), mas o nome do modelo não: não há volume nem variável de ambiente que permita trocá-lo sem reconstruir.
 
-A quarta fricção proposital, "o modelo barato não é tão bom", foi verificada no reconhecimento. A evidência está em "Tabela de fallback", na subseção "Evidência: modelos `large` × `mini`", onde vai sustentar a política de fallback.
+A quarta fricção proposital, "o modelo barato não é tão bom", foi verificada no reconhecimento e depois medida nos 5.000 tickets. A evidência está em "Tabela de fallback" e no [ADR 0004](docs/adr/0004-politica-de-fallback.md).
 
 ## Como rodar
 
@@ -178,6 +192,16 @@ cp .env.example .env
 docker compose up -d --build --wait
 curl -s localhost:8000/health
 ```
+
+A primeira subida leva ~3 min, quase tudo no gateway: ele cria o schema do banco e aplica as virtual keys antes de ficar saudável. Os serviços e as portas no host:
+
+| Serviço | Porta no host | Papel |
+|---|---|---|
+| `edge` | 8000 | a borda (nginx), porta de entrada oficial do helpdesk |
+| `app` | não publicada | a aplicação FastAPI; só fala com o `gateway` |
+| `gateway` | 4000 | o AI Gateway (LiteLLM Proxy); configuração em `gateway/` |
+| `gateway-db` | não publicada | o Postgres do gateway: virtual keys e gasto (ADR 0007) |
+| `provider-fake` | 8090 | o provider simulado e os endpoints `/admin` |
 
 ### Testes de caracterização
 
@@ -268,26 +292,54 @@ _main: a preencher (requisito 6)._
 
 ## Tabela de capacidades
 
-_A preencher (requisito 5)._
+A aplicação conhece só as 4 capacidades lógicas, uma por feature ([ADR 0003](docs/adr/0003-capacidades-logicas.md)). Os destinos, timeouts e tentativas ficam em [gateway/config.yaml](gateway/config.yaml) ([ADR 0005](docs/adr/0005-timeout-e-retry.md)).
+
+| Capacidade lógica | Feature | Modelo primário | Fallback técnico | Política com modelo fraco | Timeout por tentativa |
+|---|---|---|---|---|---|
+| `ticket-classification` | F1 | `openai/gpt-fake-large` | `anthropic/claude-fake-large` | aceita: `openai/gpt-fake-mini` | 5 s |
+| `reply-suggestion` | F2 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 30 s; 5 s até o 1º trecho em streaming |
+| `topics-report` | F3 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 30 s por lote |
+| `order-extraction` | F4 | `openai/gpt-fake-large` | `anthropic/claude-fake-large` | recusa: falha explícita | 5 s |
+
+**Número máximo de tentativas por destino** (primário, fallback técnico e, se houver, modelo fraco), o mesmo em todas as capacidades:
+
+| Falha no destino | Tentativas no destino | Depois disso |
+|---|---|---|
+| `5xx` ou `429` (transitória) | **3** (1 + 2 retries, com backoff exponencial) | próximo destino |
+| timeout (o provider não envia bytes dentro do prazo da capacidade) | **1** (sem retry) | próximo destino |
+| outros `4xx` | **1** | a requisição falha |
+
+O SDK da aplicação não repete nada (`max_retries=0`): as tentativas acontecem só no gateway. Cada feature tem ainda um prazo total para a resposta do gateway (`TIMEOUT_SECONDS`: 14 s na F1 e na F4, 28 s na F2, 60 s por lote na F3). Estourado esse prazo, a feature responde `503` explícito.
 
 ## Tabela de fallback
 
-_Tabela a preencher (requisito 5). A evidência abaixo, colhida no reconhecimento, vai sustentar a decisão sobre o modelo fraco no ADR de fallback._
+Com **um provider fora do ar**, nenhuma feature muda de resultado. A capacidade que usa esse provider como primário cai no fallback técnico, o `large` equivalente do outro provider, e responde `200` com a mesma saída.
+
+Sem **nenhum modelo `large` disponível**, cada feature faz o que o [ADR 0004](docs/adr/0004-politica-de-fallback.md) decidiu:
+
+| Feature | Sem nenhum `large` | Status | Por quê (evidência nos 5.000 tickets) |
+|---|---|---|---|
+| F1 Classificar | responde com a classificação do `gpt-fake-mini` | `200` | o `mini` deu a mesma saída em 5.000 de 5.000 tickets |
+| F2 Sugerir resposta | responde com a sugestão do `claude-fake-mini`, mais curta | `200` | mesmos 5 passos de orientação em 2/5 do tamanho; o atendente revisa antes de enviar |
+| F3 Relatório | produz o relatório com o `claude-fake-mini` | `200` | o mesmo relatório: 0 diferenças nos 34 lotes do mês |
+| F4 Extrair pedido | falha explícita, sem chamar o `mini`: `{"detail": "Nenhum modelo disponível...", "capability": "order-extraction", "reason": "..."}` | `503` | o `mini` erra 30,7% (pedido trocado pela nota fiscal em 14,3%, produto perdido em todos), e a saída vai para uma automação sem revisão humana |
 
 ### Evidência: modelos `large` × `mini`
 
-Chamadas diretas ao provider (`localhost:8090`), mesma entrada nos dois tamanhos: os primeiros 60 tickets de `data/tickets.jsonl` em `classify`/`extract` (`gpt-fake-large` × `gpt-fake-mini`), um lote de 150 em `topics` e um ticket em `suggest` (`claude-fake-large` × `claude-fake-mini`):
+A comparação completa foi feita por [scripts/compare_models.py](scripts/compare_models.py), que chama o provider direto com a mesma entrada nos dois tamanhos (~11 min, com o compose no ar):
 
-| Tarefa | `large` × `mini` | Tempo `large` → `mini` |
+```sh
+python scripts/compare_models.py data/tickets.jsonl docs/adr/evidence/large-vs-mini.json
+```
+
+| Tarefa | Entrada | `large` × `mini` |
 |---|---|---|
-| `classify` | 0/60 saídas diferentes | ~1,1 s → ~0,4 s |
-| `extract` | **15/60 saídas diferentes (25%)**. Ex.: `TK-00002` "nota fiscal 530720 ... pedido #605065": `large` → `#605065`, `mini` → `#530720` (a nota fiscal). `TK-00007` "notebook 14 polegadas": `large` identifica o produto, `mini` devolve `product: null` | ~1,1 s → ~0,4 s |
-| `topics` | saída idêntica (lote de 150 tickets) | 9,8 s → 2,7 s |
-| `suggest` | texto mais curto e menos completo: 2.402 → 1.066 caracteres | 15,8 s → 2,1 s |
+| `classify` | 5.000 tickets | 0 diferenças |
+| `topics` | 34 lotes de 150 (o mês inteiro) | 0 diferenças |
+| `suggest` | 200 tickets | texto médio de 2.431 para 1.066 caracteres, mesmos 5 passos distintos |
+| `extract` | 5.000 tickets | 1.533 diferenças: 717 números de pedido errados, 953 de 953 produtos perdidos |
 
-Os dois `large` (`gpt-fake-large` e `claude-fake-large`) deram saídas idênticas em `extract` nos 10 primeiros tickets de `data/tickets.jsonl`, como o README do provider afirma.
-
-Para reproduzir o caso mais grave (`extract` no `TK-00002`), troque só o `model`:
+O resultado está em [docs/adr/evidence/large-vs-mini.json](docs/adr/evidence/large-vs-mini.json). Para ver o caso mais grave em segundos (`extract` no `TK-00002`), troque só o `model`:
 
 ```sh
 for m in gpt-fake-large gpt-fake-mini; do
@@ -304,12 +356,71 @@ _A preencher (requisito 6)._
 
 ## Troca de modelo
 
-_A preencher (requisito 5)._
+**Arquivo:** [gateway/config.yaml](gateway/config.yaml). Cada destino aponta para um modelo físico por uma âncora YAML (`*openai-large`, `*openai-mini`, `*anthropic-large`, `*anthropic-mini`); endereço, credencial e preço de cada modelo ficam declarados uma vez no topo do arquivo.
+
+**O que alterar:** a âncora do destino. Por exemplo, para a F1 passar a usar o modelo da Anthropic:
+
+```yaml
+  - model_name: ticket-classification
+    litellm_params: { <<: [*anthropic-large, *short-timeout] }   # era *openai-large
+```
+
+**Comando:** reiniciar só o gateway. O `app` não é reconstruído nem reiniciado.
+
+```sh
+docker compose restart gateway && docker compose up -d --wait gateway
+curl -s -X POST localhost:8090/admin/reset
+curl -s -X POST localhost:8000/tickets/classification -H "Content-Type: application/json" \
+  -d '{"ticket_id": "TK-00042", "text": "Meu pedido #481516 não chegou e já passou do prazo, urgente"}'
+curl -s "localhost:8090/admin/calls?last=1"    # a chamada já aparece no novo modelo
+docker compose ps app                          # o app continua de pé desde antes da troca
+```
+
+Testado trocando a F1 para `*openai-mini`. A chamada seguinte apareceu em `/admin/calls` como `openai/gpt-fake-mini`. O container do `app` manteve o mesmo id e o mesmo horário de início.
 
 ## Roteiro de governança
 
-_A preencher (requisito 5)._
+As virtual keys são declaradas em [gateway/keys.yaml](gateway/keys.yaml) e criadas na subida do gateway, sem passo manual ([ADR 0006](docs/adr/0006-governanca-de-chaves.md)). Além da chave do app (US$ 100 a cada 30 dias e 600 requisições por minuto), há duas chaves de demonstração com limites pequenos, para a recusa aparecer na hora.
+
+**Recusa por orçamento.** A chave `demo-budget` tem teto de US$ 0,0001, e uma classificação custa ~US$ 0,00014: a 1ª requisição passa e estoura o teto, e as seguintes são recusadas.
+
+```sh
+curl -s -X POST localhost:8090/admin/reset
+for i in 1 2 3; do
+  curl -s -w "  -> HTTP %{http_code}\n" localhost:4000/chat/completions \
+    -H "Authorization: Bearer sk-demo-budget-0001" -H "Content-Type: application/json" \
+    -d '{"model": "ticket-classification", "messages": [{"role": "user", "content": "TASK: classify\nMeu pedido não chegou"}]}'
+  sleep 2
+done
+curl -s "localhost:8090/admin/calls?last=10"   # 1 chamada: as recusadas não chegaram ao provider
+```
+
+Resultado: 1ª `200`; 2ª e 3ª `429` com `"type": "budget_exceeded"` ("Budget has been exceeded!"). Se a chave já tiver sido usada desde a última subida do zero, a 1ª também é recusada, porque o gasto fica no banco do gateway até um `docker compose down`.
+
+**Recusa por limite de requisições.** A chave `demo-rate-limit` aceita 2 requisições por minuto.
+
+```sh
+curl -s -X POST localhost:8090/admin/reset
+for i in 1 2 3 4; do
+  curl -s -w "  -> HTTP %{http_code}\n" localhost:4000/chat/completions \
+    -H "Authorization: Bearer sk-demo-rate-limit-0001" -H "Content-Type: application/json" \
+    -d '{"model": "ticket-classification", "messages": [{"role": "user", "content": "TASK: classify\nMeu pedido não chegou"}]}'
+done
+curl -s "localhost:8090/admin/calls?last=10"   # 2 chamadas: a 3ª e a 4ª não chegaram ao provider
+```
+
+Resultado: 1ª e 2ª `200`; 3ª e 4ª `429` ("Rate limit exceeded ... Current limit: 2"). Repetido dentro do mesmo minuto, todas são recusadas.
 
 ## Mapa de decisões
 
-_A preencher (requisito 7)._
+| ADR | Nível | Resumo |
+|---|---|---|
+| [0001](docs/adr/0001-gateway-litellm.md) | solução | LiteLLM Proxy self-hosted como única rota da aplicação até os modelos |
+| [0002](docs/adr/0002-providers-e-teto-de-gasto.md) | corporativa | OpenAI e Anthropic aceitos, com redundância obrigatória; teto de US$ 100 por 30 dias para a IA do helpdesk |
+| [0003](docs/adr/0003-capacidades-logicas.md) | solução | uma capacidade lógica por feature; modelos físicos só no gateway |
+| [0004](docs/adr/0004-politica-de-fallback.md) | solução | fallback técnico em toda capacidade; modelo fraco aceito em F1, F2 e F3 e recusado em F4, com evidência |
+| [0005](docs/adr/0005-timeout-e-retry.md) | software | tentativas e timeout por destino no gateway, prazo total na feature, nenhum retry no SDK |
+| [0006](docs/adr/0006-governanca-de-chaves.md) | solução | virtual keys por consumidor, com orçamento e limite declarados em `gateway/keys.yaml` e aplicados na subida |
+| [0007](docs/adr/0007-banco-do-gateway.md) | solução | Postgres (`gateway-db`) para as virtual keys e o gasto por chave |
+
+_ADRs do modo de execução (requisito 6) e da leitura da métrica: a preencher._

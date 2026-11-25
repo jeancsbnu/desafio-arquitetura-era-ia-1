@@ -7,6 +7,8 @@ from .ports import LanguageModel
 from .schemas import OrderData, TicketInput
 
 CAPABILITY = "order-extraction"
+# Orçamento de latência: chamada síncrona; resposta ou erro em até 15 s.
+TIMEOUT_SECONDS = 14
 ORDER_FORMAT = re.compile(r"^#\d{6}$")
 
 
@@ -15,7 +17,7 @@ class OrderExtractor:
         self._model = model
 
     def extract(self, ticket: TicketInput) -> OrderData:
-        text = self._model.complete(CAPABILITY, f"TASK: extract\n{ticket.text}")
+        text = self._model.complete(CAPABILITY, f"TASK: extract\n{ticket.text}", TIMEOUT_SECONDS)
         data = json.loads(text)
         order_number = data.get("order_number")
         if order_number is not None and not ORDER_FORMAT.match(order_number):

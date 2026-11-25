@@ -5,25 +5,43 @@ services:
     ports:
       - "8090:8090"
 
+  # Banco do gateway: guarda as chaves virtuais e o gasto de cada uma (ADR 0007).
+  gateway-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${GATEWAY_DB_PASSWORD}
+      POSTGRES_DB: litellm
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "litellm", "-d", "litellm"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   gateway:
     image: ghcr.io/berriai/litellm:v1.102.1
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    # start.sh sobe o LiteLLM e aplica as chaves de keys.yaml, sem passo manual.
+    entrypoint: ["/bin/sh", "/gateway/start.sh"]
     # As chaves dos providers vivem só aqui.
     env_file: .env
     environment:
+      DATABASE_URL: postgresql://litellm:${GATEWAY_DB_PASSWORD}@gateway-db:5432/litellm
       # Usa a tabela de modelos embutida na imagem, sem buscá-la na internet ao subir.
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
     volumes:
-      - ./gateway/config.yaml:/app/config.yaml:ro
+      - ./gateway:/gateway:ro
     ports:
       - "4000:4000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')"]
+      # Saudável só depois que as chaves virtuais foram aplicadas.
+      test: ["CMD", "python", "-c", "import os, urllib.request; assert os.path.exists('/tmp/keys-ready'); urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')"]
       interval: 3s
       timeout: 3s
-      retries: 40
+      retries: 60
     depends_on:
       provider-fake:
+        condition: service_healthy
+      gateway-db:
         condition: service_healthy
 
   edge:
@@ -38,11 +56,10 @@ services:
 
   app:
     build: ./app
-    # Só a URL e a chave do gateway: as chaves dos providers não chegam à aplicação.
-    # Provisório: na v2 é a master key do gateway; no requisito 5 o app passa a ter uma virtual key.
+    # Só a URL do gateway e a virtual key do app: as chaves dos providers não chegam à aplicação.
     environment:
       GATEWAY_URL: http://gateway:4000
-      GATEWAY_API_KEY: ${LITELLM_MASTER_KEY}
+      GATEWAY_API_KEY: ${HELPDESK_GATEWAY_KEY}
     volumes:
       - ./data:/data:ro
     healthcheck:
