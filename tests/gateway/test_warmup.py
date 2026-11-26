@@ -1,20 +1,21 @@
 """Testes do aquecimento do gateway (gateway/bootstrap_keys.py), sem Docker.
 
 O aquecimento é uma otimização da subida: nenhuma falha nele pode impedir a gravação do arquivo
-de pronto, que o healthcheck do gateway exige. Cada teste troca o endereço do gateway por um
-servidor local de mentira e confere que `warm_up()` volta sem exceção, e rápido.
+de pronto, que o healthcheck do gateway exige. Os testes de `warm_up()` trocam o endereço do
+gateway por um servidor local de mentira e conferem que ele volta sem exceção, e rápido. Os de
+`main()` conferem quando o arquivo de pronto é gravado.
 
 Execução: `python -m pytest tests/gateway` (só precisa do pytest).
 """
 
 import importlib.util
 import json
-import os
 import socket
 import sys
 import threading
 import time
 import types
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -43,6 +44,27 @@ def bk(monkeypatch):
     return module
 
 
+class FakeGateway(BaseHTTPRequestHandler):
+    """Base dos 'gateways' de mentira: lê o corpo do pedido inteiro antes de responder (sem isso,
+    fechar a conexão com dados não lidos pode virar um reset no cliente) e não loga acessos."""
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.answer()
+
+    def answer(self):
+        raise NotImplementedError
+
+    def reply(self, status: int, body: bytes = b""):
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
 def serve(handler) -> HTTPServer:
     server = HTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -67,24 +89,18 @@ def run_warm_up(bk, limit: float = 3.0) -> float:
     return time.perf_counter() - start
 
 
-def test_happy_path_goes_through_the_local_stub_once(bk):
+def test_happy_path_goes_through_the_local_stub_once(bk, capsys):
     """O 'gateway' de mentira faz o que o LiteLLM faz: chama o destino gateway-warmup (o servidor
     local do bootstrap) e devolve a resposta dele."""
     forwarded = []
 
-    class Gateway(BaseHTTPRequestHandler):
-        def do_POST(self):
-            self.rfile.read(int(self.headers["Content-Length"]))
+    class Gateway(FakeGateway):
+        def answer(self):
             stub = f"http://127.0.0.1:{bk.WARMUP_PORT}/v1/chat/completions"
-            import urllib.request
             with urllib.request.urlopen(urllib.request.Request(stub, data=b"{}", method="POST")) as r:
                 body = r.read()
             forwarded.append(json.loads(body))
-            self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *args):
-            pass
+            self.reply(200, body)
 
     gateway = serve(Gateway)
     bk.BASE = f"http://127.0.0.1:{gateway.server_address[1]}"
@@ -92,8 +108,12 @@ def test_happy_path_goes_through_the_local_stub_once(bk):
     gateway.shutdown()
     assert len(forwarded) == 1
     assert forwarded[0]["choices"][0]["message"]["content"] == "ok"
-    with socket.socket() as s:  # o servidor local foi desligado e liberou a porta
-        s.bind(("127.0.0.1", bk.WARMUP_PORT))
+    assert "aquecimento: HTTP 200" in capsys.readouterr().out
+    # O servidor local foi desligado e fechou a porta: ninguém mais aceita conexão nela. Um `bind`
+    # na mesma porta não serve para conferir isso: no Linux ele falha enquanto a conexão encerrada
+    # fica em TIME_WAIT, mesmo com a porta já fechada.
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", bk.WARMUP_PORT), timeout=1).close()
 
 
 def test_local_port_already_in_use(bk):
@@ -115,19 +135,28 @@ def test_gateway_accepts_but_never_answers(bk):
         assert run_warm_up(bk) < bk.CALL_TIMEOUT + 2
 
 
-def test_gateway_answers_200_with_a_body_that_is_not_json(bk):
-    class NotJson(BaseHTTPRequestHandler):
-        def do_POST(self):
-            self.send_response(200); self.send_header("Content-Length", "4"); self.end_headers()
-            self.wfile.write(b"oops")
-
-        def log_message(self, *args):
-            pass
+def test_gateway_answers_200_with_a_body_that_is_not_json(bk, capsys):
+    class NotJson(FakeGateway):
+        def answer(self):
+            self.reply(200, b"oops")
 
     server = serve(NotJson)
     bk.BASE = f"http://127.0.0.1:{server.server_address[1]}"
     run_warm_up(bk)
     server.shutdown()
+    assert "aquecimento falhou (JSONDecodeError" in capsys.readouterr().out
+
+
+def test_gateway_answers_an_http_error_is_logged_as_a_failure(bk, capsys):
+    class Error(FakeGateway):
+        def answer(self):
+            self.reply(500)
+
+    server = serve(Error)
+    bk.BASE = f"http://127.0.0.1:{server.server_address[1]}"
+    run_warm_up(bk)
+    server.shutdown()
+    assert "aquecimento falhou (HTTP 500" in capsys.readouterr().out
 
 
 def test_local_server_thread_that_does_not_start_does_not_hang(bk, monkeypatch):
@@ -140,16 +169,39 @@ def test_local_server_thread_that_does_not_start_does_not_hang(bk, monkeypatch):
     run_warm_up(bk)
 
 
-def test_ready_file_is_written_even_if_warm_up_raises_base_exception(bk, tmp_path, monkeypatch):
-    ready = tmp_path / "keys-ready"
+@pytest.fixture
+def startup(bk, tmp_path, monkeypatch):
+    """main() com os três passos trocados por funções que registram a ordem em que rodaram."""
+    ready, steps = tmp_path / "keys-ready", []
     monkeypatch.setattr(bk, "READY_FILE", str(ready))
-    monkeypatch.setattr(bk, "wait_ready", lambda: None)
-    monkeypatch.setattr(bk, "apply_keys", lambda: None)
+    for name in ("wait_ready", "apply_keys", "warm_up"):
+        monkeypatch.setattr(bk, name, lambda name=name: steps.append(name))
+    return types.SimpleNamespace(bk=bk, ready=ready, steps=steps)
 
+
+def test_ready_file_is_written_after_keys_and_warm_up(startup):
+    startup.bk.main()
+    assert startup.steps == ["wait_ready", "apply_keys", "warm_up"]
+    assert startup.ready.exists()
+
+
+def test_ready_file_is_written_even_if_warm_up_raises_base_exception(startup, monkeypatch):
     def interrupted():
         raise SystemExit("interrompido")
 
-    monkeypatch.setattr(bk, "warm_up", interrupted)
+    monkeypatch.setattr(startup.bk, "warm_up", interrupted)
     with pytest.raises(SystemExit):
-        bk.main()
-    assert ready.exists()
+        startup.bk.main()
+    assert startup.ready.exists()
+
+
+def test_ready_file_is_not_written_when_the_keys_fail(startup, monkeypatch):
+    """Sem as chaves o app não funciona: o gateway não pode ficar saudável."""
+    def keys_fail():
+        raise SystemExit("falha ao aplicar a chave helpdesk-app: HTTP 500")
+
+    monkeypatch.setattr(startup.bk, "apply_keys", keys_fail)
+    with pytest.raises(SystemExit):
+        startup.bk.main()
+    assert startup.steps == ["wait_ready"]
+    assert not startup.ready.exists()

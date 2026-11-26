@@ -7,9 +7,11 @@ Roda dentro do container do gateway, em paralelo ao LiteLLM (ver start.sh):
    bootstrap sobe por alguns segundos um servidor local que responde no formato da OpenAI e chama
    o destino `gateway-warmup` (config.yaml), que aponta para ele: a inicialização acontece aqui, e
    não na 1ª requisição de um cliente, sem chegar ao provider e sem nada em /admin/calls. É uma
-   otimização: qualquer falha nela é registrada no log e a subida segue, com no máximo
-   CALL_TIMEOUT (10 s) de atraso. Depois da subida o servidor local não existe mais, e chamar
-   `gateway-warmup` dá erro;
+   otimização: qualquer falha nela, inclusive uma resposta HTTP de erro, é registrada no log como
+   "aquecimento falhou" e a subida segue. Se o gateway parar de responder, o bootstrap desiste
+   depois de CALL_TIMEOUT (10 s) sem receber nada; o prazo vale para a conexão e para cada
+   leitura, não para a chamada inteira. Depois da subida o servidor local não existe mais, e
+   chamar `gateway-warmup` dá erro;
 3. grava /tmp/keys-ready, que o healthcheck do serviço exige: o gateway só fica saudável depois.
    O arquivo é gravado mesmo que o aquecimento termine com qualquer exceção. Já uma falha no passo
    1 (HTTP ou de rede) interrompe a subida de propósito: sem as chaves o app não funciona, o
@@ -36,7 +38,7 @@ KEYS_FILE = "/gateway/keys.yaml"
 READY_FILE = "/tmp/keys-ready"
 LIMIT_FIELDS = ("models", "max_budget", "budget_duration", "rpm_limit")
 WARMUP_PORT = 4099  # o mesmo de `gateway-warmup` em config.yaml
-CALL_TIMEOUT = 10  # segundos por chamada ao gateway
+CALL_TIMEOUT = 10  # segundos sem resposta do gateway (na conexão e em cada leitura)
 
 
 def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
@@ -111,9 +113,9 @@ class _CompletionStub(BaseHTTPRequestHandler):
 
 def warm_up() -> None:
     """Otimização: não levanta `Exception`. Se algo falhar (porta local ocupada, gateway
-    inacessível ou sem resposta, resposta inválida), só registra no log, e o gateway sobe do mesmo
-    jeito, com a 1ª chamada mais lenta. `main()` grava o arquivo de pronto mesmo diante de uma
-    `BaseException` daqui."""
+    inacessível ou sem resposta, resposta HTTP de erro ou inválida), só registra no log, e o
+    gateway sobe do mesmo jeito, com a 1ª chamada mais lenta. `main()` grava o arquivo de pronto
+    mesmo diante de uma `BaseException` daqui."""
     server = None
     serving = False
     try:
@@ -124,7 +126,12 @@ def warm_up() -> None:
         status, _ = call("POST", "/chat/completions", {
             "model": "gateway-warmup", "messages": [{"role": "user", "content": "aquecimento"}],
         })
-        print(f"[bootstrap_keys] aquecimento: HTTP {status} em {time.perf_counter() - start:.2f} s", flush=True)
+        elapsed = time.perf_counter() - start
+        if status == 200:
+            print(f"[bootstrap_keys] aquecimento: HTTP 200 em {elapsed:.2f} s", flush=True)
+        else:
+            print(f"[bootstrap_keys] aquecimento falhou (HTTP {status} em {elapsed:.2f} s); seguindo sem ele",
+                  flush=True)
     except Exception as error:  # noqa: BLE001 - qualquer falha aqui não pode impedir a subida
         print(f"[bootstrap_keys] aquecimento falhou ({type(error).__name__}: {error}); seguindo sem ele",
               flush=True)
