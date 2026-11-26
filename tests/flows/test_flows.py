@@ -106,6 +106,8 @@ def test_f3_fails_with_reason_within_60_s_when_both_providers_are_down(client, p
     assert waited <= 60
     assert final.status_code == 200
     assert final.json()["state"] == "failed" and final.json()["reason"]
+    result = client.get(response.headers["location"].replace("/status/", "/"))
+    assert result.status_code == 409 and "falhou" in result.json()["detail"]
 
 
 def test_without_large_models_each_feature_follows_the_fallback_table(client, provider):

@@ -51,7 +51,7 @@ A 1ª requisição depois de uma subida também cumpre os prazos da F1 e da F2 (
 
 Streaming muda a espera percebida, mas não a duração: a conexão fica aberta os ~16 s. É aceitável, porque há alguém lendo durante todo esse tempo, e os trechos chegam a cada ~25 ms, muito antes dos 30 s da borda.
 
-O 1º trecho em menos de 1 s vale com o provider normal. Quando o gateway precisa de outro destino, a troca acontece antes do 1º trecho, e ele atrasa:
+O 1º trecho em ~1 s (de 0,85 a 1,04 s nas amostras) vale com o provider normal. Quando o gateway precisa de outro destino, a troca acontece antes do 1º trecho, e ele atrasa:
 - ~5,2 s com o primário em `error_500`;
 - ~6,0 s com o primário travado;
 - ~10,4 a 11,8 s sem nenhum `large`.
