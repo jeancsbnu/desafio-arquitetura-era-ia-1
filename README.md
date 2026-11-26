@@ -214,18 +214,21 @@ A primeira subida leva ~3 min, quase tudo no gateway: ele cria o schema do banco
 A 1ª chamada real de um processo do gateway paga uma inicialização única do LiteLLM, qualquer que seja a capacidade. Por isso, o app e o gateway se aquecem na subida, antes de ficarem saudáveis:
 
 - **o `app`** abre a conexão com o gateway e lista os modelos com a sua chave (`GET /models`), o que também passa pela autenticação do gateway;
-- **o `gateway`** (`gateway/bootstrap_keys.py`) sobe por alguns segundos um servidor local, dentro do próprio container, que responde no formato da OpenAI. Em seguida, chama o destino interno `gateway-warmup`, que aponta para esse servidor. A chamada percorre o caminho completo do gateway sem chegar ao provider e sem nada em `/admin/calls`.
+- **o `gateway`** (`gateway/bootstrap_keys.py`) sobe por alguns segundos um servidor local, dentro do próprio container, que responde no formato da OpenAI. Em seguida, chama o destino interno `gateway-warmup`, que aponta para esse servidor.
+  - A chamada percorre o caminho completo do gateway sem chegar ao provider e sem nada em `/admin/calls`. No registro de gasto do próprio gateway, ela deixa uma linha de custo 0 por subida, feita com a master key.
+  - O `gateway-warmup` aparece em `/models` só para a master key; a chave do app não o vê.
+  - O aquecimento é uma otimização: se falhar, inclusive com a porta local ocupada, só fica registrado no log, e o gateway sobe do mesmo jeito.
 
-Medido pela borda, com várias amostras por situação:
+Medido pela borda. Uma chamada normal da F1 leva ~1,1 s, e a 1ª chamada sem aquecimento levava de ~0,5 a 3,7 s a mais:
 
 | Situação | 1ª F1, sem o aquecimento do gateway | 1ª F1, com o aquecimento | 1º trecho da 1ª F2, com o aquecimento |
 |---|---|---|---|
-| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2,74 s logo depois de ligar a máquina) | 1,14 s | 0,93 s |
-| Só o `gateway` reiniciado | 1,64 a **4,76 s** (5 amostras; 1,7 a 2,8 s na revisão independente) | 1,12 a 1,17 s (3 amostras) | — |
-| Só o `app` reiniciado | 1,12 a 1,67 s | igual | 0,85 a 0,93 s |
+| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2 amostras); 2,74 s logo depois de ligar a máquina | 1,14 s | 0,93 s |
+| Só o `gateway` reiniciado | 1,64 / 1,72 / 2,28 / 2,28 / **4,76 s** (5 amostras minhas); 1,7 a 2,8 s (5 amostras da revisão independente) | 1,12 / 1,15 / 1,17 s (3 amostras) | — |
+| Só o `app` reiniciado | 1,12 s (minha amostra); 1,25 a 1,67 s (3 amostras da revisão independente) | não muda: o aquecimento do gateway não age no restart do app | 0,85 a 0,93 s |
 | Chamadas seguintes | F1 ~1,1 s; F2 ~0,9 s | igual | igual |
 
-Sem o aquecimento do gateway, a 1ª F1 passou do limite de 3 s numa das amostras (4,76 s). As alternativas avaliadas e o motivo de cada escolha estão no [ADR 0008](docs/adr/0008-modo-de-execucao.md).
+Sem o aquecimento do gateway, 1 das 10 amostras com o gateway reiniciado passou do limite de 3 s (4,76 s), e outras chegaram perto (2,8 s). As alternativas avaliadas e o motivo de cada escolha estão no [ADR 0008](docs/adr/0008-modo-de-execucao.md).
 
 ### Testes de caracterização
 

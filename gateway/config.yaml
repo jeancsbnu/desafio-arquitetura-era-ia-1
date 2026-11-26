@@ -77,16 +77,18 @@ model_list:
     litellm_params: { <<: [*anthropic-large, *short-timeout] }
 
   # Aquecimento (uso interno do bootstrap_keys.py, na subida): a 1ª chamada real de um processo do
-  # gateway paga uma inicialização de ~0,5 a 3,7 s, qualquer que seja o destino. Este destino
-  # aponta para um servidor local que o bootstrap sobe por alguns segundos dentro do próprio
-  # container e que responde no formato da OpenAI: a 1ª chamada percorre o caminho completo do
-  # gateway (cliente HTTP, resposta, custo, registro de gasto) sem chegar ao provider e sem
-  # aparecer em /admin/calls. A aplicação não o alcança (a chave dela só vê as 4 capacidades).
+  # gateway leva ~0,5 a 3,7 s a mais que uma chamada normal, qualquer que seja o destino. Este
+  # destino aponta para um servidor local que o bootstrap sobe por alguns segundos dentro do
+  # próprio container e que responde no formato da OpenAI: a 1ª chamada percorre o caminho
+  # completo do gateway (cliente HTTP, resposta, custo, registro de gasto) sem chegar ao provider e
+  # sem aparecer em /admin/calls; no registro de gasto do gateway fica uma linha de custo 0 por
+  # subida. A aplicação não o alcança (a chave dela só vê as 4 capacidades). Herda as tentativas
+  # globais: como o servidor local responde na hora, na prática é 1 chamada.
   - model_name: gateway-warmup
     litellm_params:
       model: openai/gateway-warmup
       api_base: http://127.0.0.1:4099/v1
-      api_key: sk-warmup-local          # não é credencial: o servidor local aceita qualquer chave
+      api_key: local-sem-credencial     # o servidor local aceita qualquer valor
       input_cost_per_token: 0
       output_cost_per_token: 0
       timeout: 5
