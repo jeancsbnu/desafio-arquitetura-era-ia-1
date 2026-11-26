@@ -1,9 +1,10 @@
-"""Testes do aquecimento do gateway (gateway/bootstrap_keys.py), sem Docker.
+"""Testes da subida do gateway (gateway/bootstrap_keys.py), sem Docker.
 
 O aquecimento é uma otimização da subida: nenhuma falha nele pode impedir a gravação do arquivo
 de pronto, que o healthcheck do gateway exige. Os testes de `warm_up()` trocam o endereço do
 gateway por um servidor local de mentira e conferem que ele volta sem exceção, e rápido. Os de
-`main()` conferem quando o arquivo de pronto é gravado.
+`main()` conferem quando o arquivo de pronto é gravado. Os de `wait_ready()` conferem a espera
+pelo gateway na 1ª subida: ela tolera o gateway ainda subindo e tem o mesmo prazo do healthcheck.
 
 Execução: `python -m pytest tests/gateway` (só precisa do pytest).
 """
@@ -205,3 +206,40 @@ def test_ready_file_is_not_written_when_the_keys_fail(startup, monkeypatch):
         startup.bk.main()
     assert startup.steps == ["wait_ready"]
     assert not startup.ready.exists()
+
+
+def test_wait_ready_waits_through_a_gateway_that_is_still_booting(bk, monkeypatch):
+    """Enquanto sobe, o gateway pode cortar a conexão ou devolver um corpo vazio, inválido ou sem
+    o banco conectado: nada disso derruba a espera, que só termina com o banco conectado."""
+    answers = [None, (200, b""), (200, b"oops"), (200, b"[]"), (503, b'{"db": "connected"}'),
+               (200, b'{"db": "disconnected"}'), (200, b'{"db": "connected"}')]
+    served = []
+
+    class Booting(FakeGateway):
+        def do_GET(self):
+            answer = answers[len(served)]
+            served.append(answer)
+            if answer is not None:  # None: fecha a conexão sem responder
+                self.reply(*answer)
+
+    server = serve(Booting)
+    bk.BASE = f"http://127.0.0.1:{server.server_address[1]}"
+    monkeypatch.setattr(bk, "time", types.SimpleNamespace(monotonic=time.monotonic, sleep=lambda _: None))
+    bk.wait_ready()
+    server.shutdown()
+    assert served == answers
+
+
+def test_wait_ready_gives_up_at_the_deadline(bk, monkeypatch):
+    monkeypatch.setattr(bk, "READY_TIMEOUT", 1)
+    start = time.perf_counter()
+    with pytest.raises(SystemExit, match="em 1 s"):
+        bk.wait_ready()
+    assert time.perf_counter() - start < bk.READY_TIMEOUT + bk.CALL_TIMEOUT + 2
+
+
+def test_ready_timeout_is_the_healthcheck_start_period(bk):
+    """O bootstrap espera tanto quanto o healthcheck tolera: um prazo menor deixaria o gateway
+    `unhealthy` numa máquina mais lenta, mesmo com o healthcheck ainda esperando."""
+    compose = (MODULE.parents[1] / "compose.yaml").read_text(encoding="utf-8")
+    assert f"start_period: {bk.READY_TIMEOUT}s" in compose

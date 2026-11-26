@@ -1,6 +1,6 @@
 # Brief entregue ao agente na escala da refatoração
 
-Texto entregue ao agente que fez a escala (ver "Handoff para o agente" em [refactoring-plan.md](refactoring-plan.md)). Houve uma única edição depois do envio: o caminho da pasta temporária na máquina de desenvolvimento foi trocado por `<pasta-temporária>`.
+Texto entregue ao agente que fez a escala (ver "Handoff para o agente" em [refactoring-plan.md](refactoring-plan.md)). A única mudança depois do envio foi trocar os dois caminhos da máquina de desenvolvimento por marcadores: o da pasta temporária por `<pasta-temporária>`, e o do repositório por `<repositório>`.
 
 ---
 
@@ -8,7 +8,7 @@ Você vai terminar uma refatoração já planejada e pilotada numa aplicação F
 
 ## Contexto
 
-Repositório: `D:\desenvolvimento\Python\desafio-arquitetura-era-ia-1` (Windows; use o Git Bash). O código fica em `app/helpdesk/`. Leia antes de começar:
+Repositório: `<repositório>` (Windows; use o Git Bash). O código fica em `app/helpdesk/`. Leia antes de começar:
 
 - `docs/refactoring-plan.md`: o plano, o piloto e as Revisões 1 e 2. Siga a versão revisada.
 - O piloto já feito, que é o padrão a seguir: `app/helpdesk/ports.py`, `app/helpdesk/gateway.py`, `app/helpdesk/classification.py` e `app/helpdesk/main.py`.

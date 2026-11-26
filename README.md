@@ -4,27 +4,9 @@
 
 ## Visão geral
 
-A aplicação FastAPI do helpdesk não conhece nenhum provider. Cada feature pede uma de quatro capacidades lógicas a um AI Gateway self-hosted (LiteLLM Proxy), por uma porta (`LanguageModel`) que só o adaptador `gateway` implementa. O gateway:
+A aplicação FastAPI do helpdesk não conhece nenhum provider: cada feature pede uma de quatro capacidades lógicas, por uma porta (`LanguageModel`) que só o adaptador `gateway` implementa, a um AI Gateway self-hosted (LiteLLM Proxy). O gateway decide o modelo físico, guarda as credenciais dos providers, aplica orçamento e limite de requisições por virtual key e cuida do timeout, das tentativas e do fallback. Trocar o modelo de uma feature é editar `gateway/config.yaml` e reiniciar só o gateway. Cada feature é entregue no modo que o seu contrato pede ([ADR 0008](docs/adr/0008-modo-de-execucao.md)): a classificação (F1) e a extração de pedido (F4) são síncronas e respondem em ~1,1 s; a sugestão de resposta (F2) chega por streaming, com o 1º trecho em menos de 1 s; e o relatório de temas (F3) é assíncrono, com o pedido do mês aceito em milissegundos (`202`) e o relatório entregue depois, pela URL de status. As decisões estão no "Mapa de decisões", e a evolução medida, de `v1-coupled` à `main`, em "Métrica".
 
-- decide o modelo físico;
-- guarda as credenciais dos providers;
-- aplica orçamento e limite de requisições por virtual key;
-- cuida da resiliência: timeout por tentativa, até 3 tentativas com backoff em falhas transitórias e fallback para o modelo equivalente do outro provider.
-
-Trocar o modelo de uma feature é editar `gateway/config.yaml` e reiniciar só o gateway. As decisões estão no "Mapa de decisões", e a evolução medida, de `v1-coupled` a `v2-decoupled`, em "Métrica".
-
-**Quando um provider cai, nenhuma feature para nem muda de resultado.** O gateway tenta o primário (até 3 vezes em erro `5xx`, uma vez se o provider travar) e passa ao modelo `large` equivalente do outro provider. Se nenhum `large` estiver disponível:
-
-- **classificação, sugestão e relatório** respondem com o modelo `mini`, cuja saída foi medida como suficiente para cada uma;
-- **extração de pedido** falha explicitamente com `503`, porque alimenta uma automação sem revisão humana e o `mini` erra 30% das extrações.
-
-Cada feature é entregue no modo que o seu contrato pede ([ADR 0008](docs/adr/0008-modo-de-execucao.md)):
-
-- **F1 (classificação) e F4 (extração):** síncronas, porque respondem em ~1,1 s.
-- **F2 (sugestão):** chega por streaming (Server-Sent Events). Com o provider normal, o atendente vê o 1º trecho em menos de 1 s, e não depois de 16 s. Quando o gateway precisa recorrer ao fallback, o 1º trecho atrasa (de ~5 a ~10 s, conforme a falha; ver "Fluxos").
-- **F3 (relatório):** assíncrona. O pedido do mês é aceito em milissegundos com `202`, e o relatório completo fica disponível depois, pela URL de status.
-
-Nenhuma requisição termina em `504` da borda, nem com o provider fora ou travado.
+**Quando um provider cai, nenhuma feature para nem muda de resultado, e nenhuma requisição termina em `504` da borda.** O gateway tenta o primário (até 3 vezes em erro `5xx`, 2 em `429` e uma vez se o provider travar) e passa ao modelo `large` equivalente do outro provider; o que muda é a espera, com o 1º trecho da F2 em ~5 a 6 s em vez de 1 s. Se nenhum `large` estiver disponível, a classificação, a sugestão e o relatório respondem com o modelo `mini`, cuja saída foi medida como suficiente para cada uma, e a extração de pedido falha explicitamente com `503`, porque alimenta uma automação sem revisão humana e o `mini` erra 30% das extrações.
 
 ## Diagnóstico da v1
 
@@ -199,7 +181,7 @@ docker compose up -d --build --wait
 curl -s localhost:8000/health
 ```
 
-A primeira subida leva ~3 min, quase tudo no gateway: ele cria o schema do banco e aplica as virtual keys antes de ficar saudável. Os serviços e as portas no host:
+A primeira subida leva de ~1,5 a 3,5 min nesta máquina, conforme a carga, quase tudo no gateway: ele cria o schema do banco e aplica as virtual keys antes de ficar saudável. Numa máquina mais lenta, o gateway e o healthcheck esperam até 10 min ([ADR 0007](docs/adr/0007-banco-do-gateway.md)). Os serviços e as portas no host:
 
 | Serviço | Porta no host | Papel |
 |---|---|---|
@@ -224,12 +206,12 @@ Medido pela borda. Uma chamada normal da F1 leva ~1,1 s, e a 1ª chamada sem aqu
 
 | Situação | 1ª F1, sem o aquecimento do gateway | 1ª F1, com o aquecimento | 1º trecho da 1ª F2, com o aquecimento |
 |---|---|---|---|
-| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2 amostras); 2,74 s logo depois de ligar a máquina | 1,14 / 1,24 / 1,32 s (3 subidas do zero, a última num clone limpo do GitHub) | 0,93 / 1,04 s |
-| Só o `gateway` reiniciado | 1,64 / 1,72 / 2,28 / 2,28 / **4,76 s** (5 amostras minhas); 1,7 a 2,8 s (5 amostras da revisão independente) | 1,12 / 1,15 / 1,17 s (3 amostras) | — |
+| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2 amostras); 2,74 s logo depois de ligar a máquina | 1,14 / 1,24 / 1,32 / 1,35 s (4 subidas do zero, as duas últimas em clones limpos do GitHub) | 0,93 / 0,94 / 1,04 s |
+| Só o `gateway` reiniciado | 1,64 / 1,72 / 2,28 / 2,28 / **4,76 s** (5 amostras minhas); 1,7 a 2,8 s (5 amostras da revisão independente) | 1,12 / 1,15 / 1,17 / 1,28 / 1,28 s (5 amostras) | — |
 | Só o `app` reiniciado | 1,12 s (minha amostra); 1,25 a 1,67 s (3 amostras da revisão independente) | não muda: o aquecimento do gateway não age no restart do app | 0,85 a 0,93 s |
 | Chamadas seguintes | F1 ~1,1 s; F2 ~0,9 s | igual | igual |
 
-Sem o aquecimento do gateway, 1 das 10 amostras com o gateway reiniciado passou do limite de 3 s (4,76 s), e outras chegaram perto (2,8 s). As alternativas avaliadas e o motivo de cada escolha estão no [ADR 0008](docs/adr/0008-modo-de-execucao.md).
+Sem o aquecimento do gateway, 1 das 10 amostras com o gateway reiniciado passou do limite de 3 s (4,76 s), e outras chegaram perto (2,8 s). As alternativas avaliadas e o motivo de cada escolha estão no [ADR 0010](docs/adr/0010-aquecimento-na-subida.md).
 
 ### Testes de caracterização
 
@@ -267,14 +249,15 @@ python -m pytest tests/flows                  # ~9 min, com o relatório do mês
 python -m pytest tests/flows -m "not slow"    # ~2 min, sem ele
 ```
 
-### Testes do aquecimento do gateway
+### Testes da subida do gateway
 
-`tests/gateway/test_warmup.py` testa, sem Docker, que o aquecimento do gateway (ver "A primeira chamada depois da subida") nunca impede a subida. São 10 testes:
-- o caminho normal e cada cenário de falha do aquecimento;
-- quando o arquivo de pronto é gravado: depois das chaves e do aquecimento, mesmo que o aquecimento falhe, e nunca sem as chaves aplicadas.
+`tests/gateway/test_warmup.py` testa, sem Docker, o `gateway/bootstrap_keys.py`, que aplica as chaves e aquece o gateway na subida (ver "A primeira chamada depois da subida"). São 13 testes:
+- o caminho normal e cada cenário de falha do aquecimento, que nunca impede a subida;
+- quando o arquivo de pronto é gravado: depois das chaves e do aquecimento, mesmo que o aquecimento falhe, e nunca sem as chaves aplicadas;
+- a espera pelo gateway na 1ª subida: ela tolera o gateway ainda subindo e vai até o mesmo prazo do healthcheck (10 min).
 
 ```sh
-python -m pytest tests/gateway    # ~6 s
+python -m pytest tests/gateway    # ~8 s
 ```
 
 A suíte de caracterização detecta a troca de um `large` por um `mini` em F2 e F4. Com o `mini`, a sugestão da F2 muda, e 5 dos 7 tickets do dataset da F4 dão outro resultado: por exemplo, o `TK-00002` devolve a nota fiscal `#530720` no lugar do pedido. Em F1 e F3, o `mini` dá a mesma saída (ver "Evidência: modelos `large` × `mini`").
@@ -346,6 +329,7 @@ Leitura, comparando com a v1:
 
 Resultado em [metrics/results/main.csv](metrics/results/main.csv). Leitura, comparando com a v2:
 
+- **O código que chama o gateway fica num único componente: `gateway`** (`app/helpdesk/gateway.py`), o único que importa o SDK (`openai`). Nenhuma feature o importa; só `main.py`, o ponto de composição.
 - **Na zona de dor, só `schemas`**, a exceção declarada no [ADR 0009](docs/adr/0009-leitura-da-metrica.md): tipos de valor do contrato HTTP, agora com o `TaskStatus` da F3. Nenhum outro componente está na zona. O componente que chama o gateway (`gateway`) e as quatro features estão fora dela.
 - **`ports` cresceu com os modos de execução.** Ganhou o `stream` da F2, a porta `TaskRunner` da F3 e as exceções do contrato (`ModelUnavailable` e `ModelRejectedInput`). Com 3 `Protocol`s e 2 exceções, A caiu para 0,60. Como passou a importar `schemas` (o `TaskStatus`), I subiu para 0,11. O D de 0,29 continua perto da Main Sequence, e `ports` segue o componente mais dependido (Ca 8).
 - **Nasceu o adaptador `background`** (I 0,67, D 0,33), o pool de threads da F3, que implementa `TaskRunner` e é importado só por `main`. É o mesmo desenho de `gateway` e `tickets`: as features não sabem como a tarefa roda.
@@ -356,18 +340,19 @@ Resultado em [metrics/results/main.csv](metrics/results/main.csv). Leitura, comp
 
 A aplicação conhece só as 4 capacidades lógicas, uma por feature ([ADR 0003](docs/adr/0003-capacidades-logicas.md)). Os destinos, timeouts e tentativas ficam em [gateway/config.yaml](gateway/config.yaml) ([ADR 0005](docs/adr/0005-timeout-e-retry.md)).
 
-| Capacidade lógica | Feature | Modelo primário | Fallback técnico | Política com modelo fraco | Timeout por tentativa |
-|---|---|---|---|---|---|
-| `ticket-classification` | F1 | `openai/gpt-fake-large` | `anthropic/claude-fake-large` | aceita: `openai/gpt-fake-mini` | 5 s |
-| `reply-suggestion` | F2 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 5 s até o 1º trecho (streaming) |
-| `topics-report` | F3 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 15 s por lote |
-| `order-extraction` | F4 | `openai/gpt-fake-large` | `anthropic/claude-fake-large` | recusa: falha explícita | 5 s |
+| Capacidade lógica | Feature | Modelo primário | Fallback técnico | Política com modelo fraco | Máx. de tentativas por destino (primário / fallback / fraco) | Timeout por tentativa |
+|---|---|---|---|---|---|---|
+| `ticket-classification` | F1 | `openai/gpt-fake-large` | `anthropic/claude-fake-large` | aceita: `openai/gpt-fake-mini` | 3 / 3 / 3 | 5 s |
+| `reply-suggestion` | F2 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 3 / 3 / 3 | 5 s até o 1º trecho (streaming) |
+| `topics-report` | F3 | `anthropic/claude-fake-large` | `openai/gpt-fake-large` | aceita: `anthropic/claude-fake-mini` | 3 / 3 / 3 | 15 s por lote |
+| `order-extraction` | F4 | `openai/gpt-fake-large` | `anthropic/claude-fake-large` | recusa: falha explícita | 3 / 3 / — | 5 s |
 
-**Número máximo de tentativas por destino** (primário, fallback técnico e, se houver, modelo fraco), o mesmo em todas as capacidades:
+O máximo de 3 tentativas vale para erro `5xx`. Com outras falhas, cada destino tem menos tentativas, igual em todas as capacidades:
 
 | Falha no destino | Tentativas no destino | Depois disso |
 |---|---|---|
-| `5xx` ou `429` (transitória) | **3** (1 + 2 retries, com backoff exponencial) | próximo destino |
+| `5xx` (transitória) | **3** (1 + 2 retries, com backoff exponencial) | próximo destino |
+| `429` (limite do provider) | **2** (1 + 1 retry, depois do `Retry-After` do provider) | próximo destino |
 | timeout (o provider não envia bytes dentro do prazo da capacidade) | **1** (sem retry) | próximo destino |
 | outros `4xx` (ex.: entrada maior que o contexto do modelo) | **1** (sem retry) | próximo destino: o LiteLLM aplica a lista de fallbacks a qualquer erro. Se todos recusarem, a feature responde `422` |
 
@@ -465,7 +450,7 @@ Quando o gateway precisa de outro destino, ele troca antes do 1º trecho, e o st
 | normal | ~0,9 s | `claude-fake-large` |
 | `anthropic` em `error_500` | ~5,2 s (3 tentativas com backoff) | `gpt-fake-large` |
 | `anthropic` em `timeout` | ~6,0 s (1 tentativa cortada em 5 s) | `gpt-fake-large` |
-| os dois `large` em `error_500` | ~10,4 s (3 + 3 tentativas) | `claude-fake-mini` |
+| os dois `large` em `error_500` | ~10,4 a 11,8 s (3 + 3 tentativas) | `claude-fake-mini` |
 | `anthropic` em `midstream_error` | ~0,9 s, e o stream termina em `event: error` | não há fallback depois que o texto começou: o gateway não troca de destino no meio do stream |
 
 ### F3 Relatório de temas: assíncrono (Asynchronous Request-Reply)
@@ -596,5 +581,6 @@ Resultado: 1ª e 2ª `200`; 3ª e 4ª `429` ("Rate limit exceeded ... Current li
 | [0007](docs/adr/0007-banco-do-gateway.md) | solução | Postgres (`gateway-db`) para as virtual keys e o gasto por chave |
 | [0008](docs/adr/0008-modo-de-execucao.md) | solução | F1 e F4 síncronas, F2 em streaming (SSE), F3 assíncrona (Asynchronous Request-Reply), com as perguntas da árvore de decisão por feature |
 | [0009](docs/adr/0009-leitura-da-metrica.md) | software | régua fixa nas três medições; `schemas` declarado estável por natureza; nenhuma outra exceção |
+| [0010](docs/adr/0010-aquecimento-na-subida.md) | software | app e gateway aquecidos na subida, por um servidor local e um destino interno do gateway, para a 1ª requisição cumprir os prazos sem chamar o provider |
 
 O plano de refatoração, com o piloto, as revisões e o handoff para o agente de IA, está em [docs/refactoring-plan.md](docs/refactoring-plan.md).
