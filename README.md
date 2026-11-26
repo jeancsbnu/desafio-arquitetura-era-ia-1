@@ -211,16 +211,21 @@ A primeira subida leva ~3 min, quase tudo no gateway: ele cria o schema do banco
 
 ### A primeira chamada depois da subida
 
-A primeira chamada a uma capacidade depois de subir o ambiente é mais lenta que as seguintes, porque o gateway inicializa o caminho até o provider nessa hora. Medido pela borda:
+A 1ª chamada real de um processo do gateway paga uma inicialização única do LiteLLM, qualquer que seja a capacidade. Por isso, o app e o gateway se aquecem na subida, antes de ficarem saudáveis:
 
-| Situação | 1ª F1 (limite 3 s) | 1º trecho da 1ª F2 (limite 1,5 s) | Chamadas seguintes |
+- **o `app`** abre a conexão com o gateway e lista os modelos com a sua chave (`GET /models`), o que também passa pela autenticação do gateway;
+- **o `gateway`** (`gateway/bootstrap_keys.py`) sobe por alguns segundos um servidor local, dentro do próprio container, que responde no formato da OpenAI. Em seguida, chama o destino interno `gateway-warmup`, que aponta para esse servidor. A chamada percorre o caminho completo do gateway sem chegar ao provider e sem nada em `/admin/calls`.
+
+Medido pela borda, com várias amostras por situação:
+
+| Situação | 1ª F1, sem o aquecimento do gateway | 1ª F1, com o aquecimento | 1º trecho da 1ª F2, com o aquecimento |
 |---|---|---|---|
-| Logo depois de ligar a máquina (Docker ainda aquecendo) e `docker compose up -d --build --wait` | 2,74 s | 1,26 s | F1 ~1,1 s; F2 ~0,9 s |
-| `docker compose down` + `up -d --wait`, com a máquina já em uso | 1,55 a 1,60 s | ~0,9 s | F1 ~1,1 s; F2 ~0,9 s |
-| Só o `gateway` reiniciado | 1,38 s | 1,08 s | F1 ~1,1 s; F2 ~0,9 s |
-| Só o `app` reiniciado | 1,12 s | 0,85 a 0,93 s | F1 ~1,1 s; F2 ~0,9 s |
+| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2,74 s logo depois de ligar a máquina) | 1,14 s | 0,93 s |
+| Só o `gateway` reiniciado | 1,64 a **4,76 s** (5 amostras; 1,7 a 2,8 s na revisão independente) | 1,12 a 1,17 s (3 amostras) | — |
+| Só o `app` reiniciado | 1,12 a 1,67 s | igual | 0,85 a 0,93 s |
+| Chamadas seguintes | F1 ~1,1 s; F2 ~0,9 s | igual | igual |
 
-Mesmo a 1ª chamada fica dentro dos limites, mas com pouca folga logo depois de ligar a máquina. O app abre a conexão com o gateway na subida, e por isso reiniciar só o `app` não custa nada. Os motivos para não aquecer também o gateway estão no [ADR 0008](docs/adr/0008-modo-de-execucao.md).
+Sem o aquecimento do gateway, a 1ª F1 passou do limite de 3 s numa das amostras (4,76 s). As alternativas avaliadas e o motivo de cada escolha estão no [ADR 0008](docs/adr/0008-modo-de-execucao.md).
 
 ### Testes de caracterização
 
@@ -406,7 +411,7 @@ T='{"ticket_id": "TK-00042", "text": "Meu pedido #481516 não chegou e já passo
 
 ### F1 Classificar ticket: síncrono
 
-O resultado completo vem no corpo, em ~1,1 s (a 1ª chamada depois da subida é mais lenta; ver "A primeira chamada depois da subida"). Sem modelo disponível, a resposta é `503` com `{"detail", "capability", "reason"}`.
+O resultado completo vem no corpo, em ~1,1 s, inclusive na 1ª chamada depois da subida (ver "A primeira chamada depois da subida"). Sem modelo disponível, a resposta é `503` com `{"detail", "capability", "reason"}`.
 
 ```sh
 curl -s -X POST localhost:8000/tickets/classification -H "Content-Type: application/json" -d "$T"
@@ -415,7 +420,7 @@ curl -s -X POST localhost:8000/tickets/classification -H "Content-Type: applicat
 
 ### F2 Sugerir resposta: streaming (Server-Sent Events)
 
-`200` com `Content-Type: text/event-stream`. Cada trecho chega num evento `data: {"chunk": ...}`, e o fim, no evento `end`. O 1º trecho chega em ~0,9 s (até ~1,3 s na 1ª chamada logo depois de ligar a máquina), e o texto completo em ~17 s. Para montar a sugestão, concatene os `chunk` na ordem.
+`200` com `Content-Type: text/event-stream`. Cada trecho chega num evento `data: {"chunk": ...}`, e o fim, no evento `end`. O 1º trecho chega em ~0,9 s, inclusive na 1ª chamada depois da subida (ver "A primeira chamada depois da subida"), e o texto completo em ~17 s. Para montar a sugestão, concatene os `chunk` na ordem.
 
 ```sh
 curl -N -X POST localhost:8000/tickets/reply-suggestion -H "Content-Type: application/json" -d "$T"

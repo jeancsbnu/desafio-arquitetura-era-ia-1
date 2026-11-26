@@ -47,18 +47,25 @@ Para o texto chegar aos poucos, nada no caminho pode acumular a resposta:
 - o gateway repassa os trechos;
 - não há middleware de compressão.
 
-O app abre a conexão com o gateway já na subida. Sem isso, a 1ª requisição depois de reiniciar o `app` levava 1,35 s até o 1º trecho, perto do limite.
+O app abre a conexão com o gateway já na subida (`GET /models` com a sua chave, o que também passa pela autenticação do gateway). Sem isso, a 1ª requisição depois de reiniciar o `app` levava 1,35 s até o 1º trecho, perto do limite.
 
-O gateway também tem um custo na 1ª chamada real de cada rota até o provider. Medido pela borda, a 1ª F1 depois da subida levou:
-- 1,38 s com só o `gateway` reiniciado;
-- 1,55 a 1,60 s depois de `docker compose down` + `up`;
-- 2,74 s logo depois de ligar a máquina, com o Docker ainda aquecendo.
+**O gateway também se aquece na subida.** A 1ª chamada real de um processo do LiteLLM paga uma inicialização única, que o `/admin/calls` mostrou não ser do provider: ele levou sempre 1.076 ms. Os headers `x-litellm-*` mostraram que também não é o overhead do LiteLLM (4 a 57 ms), e sim o caminho da chamada HTTP.
 
-A 1ª F2, nesse último caso, teve o 1º trecho em 1,26 s. Depois disso, ~1,1 s e ~0,9 s. Tudo fica dentro dos limites (3 s e 1,5 s), mas com pouca folga logo depois de ligar a máquina. A tabela completa está no README ("A primeira chamada depois da subida").
+O custo é pago uma vez por processo, qualquer que seja o destino. Depois de reiniciar o gateway, a 1ª chamada à F4 levou 1,55 a 2,28 s, e a F1 (outro destino) e a F2 (outro provider), logo em seguida, já saíram em ~1,15 s.
 
-Duas formas de aquecer o gateway foram avaliadas e descartadas:
-- **Resposta simulada do LiteLLM (`mock_response`)**, enviada na subida por uma chave interna autorizada. Foi implementada e medida: não chega ao provider (0 chamadas em `/admin/calls`), mas a 1ª F1 só passou de 1,60 s para 1,55 s. A simulação pula justamente a chamada HTTP ao provider, que é o que custa na 1ª vez. A mudança foi desfeita.
-- **Chamadas reais ao provider na subida.** Aqueceriam o caminho inteiro, mas apareceriam no `/admin/calls`, que é o instrumento usado para contar tentativas e conferir modelos. Um ganho de ~0,5 s não justifica poluir a prova.
+Sem aquecimento, a 1ª F1 depois de reiniciar o gateway levou de 1,64 a **4,76 s**. Esse pico passa do limite de 3 s, e a revisão independente mediu 1,7 a 2,8 s. Por isso o aquecimento virou parte da subida, e não um detalhe de desempenho.
+
+Formas avaliadas, e a escolhida:
+- **Resposta simulada do LiteLLM (`mock_response`)**, por uma chave interna autorizada. Não chega ao provider, mas pula justamente a chamada HTTP, que é o que custa. Medido: a 1ª F1 foi de 1,60 s para 1,55 s. Descartada.
+- **Endpoints que não chamam modelo** (`/health/readiness`, `/models`, `/key/info`), ou um `start_period` maior no healthcheck. Não percorrem o caminho da chamada; o `/models` já é o que o app usa. Descartados.
+- **Chamadas reais ao provider na subida.** Aqueceriam tudo, mas apareceriam no `/admin/calls`, que é o instrumento usado para contar tentativas e conferir modelos. Descartadas.
+- **Destino apontando para um caminho do provider que não é de inferência** (`/warmup`, que responde `404` sem registro). Medido: aquecimento parcial, com a 1ª F1 em 1,44 s, porque a resposta de erro não percorre a parte de sucesso (leitura da resposta, custo, registro de gasto). Substituída pela opção seguinte.
+- **Escolhida: um servidor local dentro do container do gateway.** O `bootstrap_keys.py` o sobe por alguns segundos, e ele responde no formato da OpenAI. O destino interno `gateway-warmup` aponta para ele. A 1ª chamada percorre o caminho completo do gateway, inclusive o de sucesso, sem chegar ao provider. Medido:
+  - depois de reiniciar o gateway, 1ª F1 em 1,12 a 1,17 s (3 amostras);
+  - depois de `down` + `up`, 1ª F1 em 1,14 s e 1º trecho da F2 em 0,93 s;
+  - 0 chamadas em `/admin/calls` depois da subida.
+
+  A chave do app não enxerga esse destino, e se o aquecimento falhar o gateway sobe do mesmo jeito.
 
 Streaming muda a espera percebida, mas não a duração: a conexão fica aberta os ~16 s. É aceitável, porque há alguém lendo durante todo esse tempo, e os trechos chegam a cada ~25 ms, muito antes dos 30 s da borda.
 
