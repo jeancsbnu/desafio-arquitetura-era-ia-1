@@ -47,7 +47,18 @@ Para o texto chegar aos poucos, nada no caminho pode acumular a resposta:
 - o gateway repassa os trechos;
 - não há middleware de compressão.
 
-O app abre a conexão com o gateway já na subida. Sem isso, a 1ª requisição depois de reiniciar levava 1,35 s até o 1º trecho, perto do limite.
+O app abre a conexão com o gateway já na subida. Sem isso, a 1ª requisição depois de reiniciar o `app` levava 1,35 s até o 1º trecho, perto do limite.
+
+O gateway também tem um custo na 1ª chamada real de cada rota até o provider. Medido pela borda, a 1ª F1 depois da subida levou:
+- 1,38 s com só o `gateway` reiniciado;
+- 1,55 a 1,60 s depois de `docker compose down` + `up`;
+- 2,74 s logo depois de ligar a máquina, com o Docker ainda aquecendo.
+
+A 1ª F2, nesse último caso, teve o 1º trecho em 1,26 s. Depois disso, ~1,1 s e ~0,9 s. Tudo fica dentro dos limites (3 s e 1,5 s), mas com pouca folga logo depois de ligar a máquina. A tabela completa está no README ("A primeira chamada depois da subida").
+
+Duas formas de aquecer o gateway foram avaliadas e descartadas:
+- **Resposta simulada do LiteLLM (`mock_response`)**, enviada na subida por uma chave interna autorizada. Foi implementada e medida: não chega ao provider (0 chamadas em `/admin/calls`), mas a 1ª F1 só passou de 1,60 s para 1,55 s. A simulação pula justamente a chamada HTTP ao provider, que é o que custa na 1ª vez. A mudança foi desfeita.
+- **Chamadas reais ao provider na subida.** Aqueceriam o caminho inteiro, mas apareceriam no `/admin/calls`, que é o instrumento usado para contar tentativas e conferir modelos. Um ganho de ~0,5 s não justifica poluir a prova.
 
 Streaming muda a espera percebida, mas não a duração: a conexão fica aberta os ~16 s. É aceitável, porque há alguém lendo durante todo esse tempo, e os trechos chegam a cada ~25 ms, muito antes dos 30 s da borda.
 
