@@ -4,7 +4,7 @@
 
 ## Visão geral
 
-A aplicação FastAPI do helpdesk não conhece nenhum provider: cada feature pede uma de quatro capacidades lógicas, por uma porta (`LanguageModel`) que só o adaptador `gateway` implementa, a um AI Gateway self-hosted (LiteLLM Proxy). O gateway decide o modelo físico, guarda as credenciais dos providers, aplica orçamento e limite de requisições por virtual key e cuida do timeout, das tentativas e do fallback. Trocar o modelo de uma feature é editar `gateway/config.yaml` e reiniciar só o gateway. Cada feature é entregue no modo que o seu contrato pede ([ADR 0008](docs/adr/0008-modo-de-execucao.md)): a classificação (F1) e a extração de pedido (F4) são síncronas e respondem em ~1,1 s; a sugestão de resposta (F2) chega por streaming, com o 1º trecho em menos de 1 s; e o relatório de temas (F3) é assíncrono, com o pedido do mês aceito em milissegundos (`202`) e o relatório entregue depois, pela URL de status. As decisões estão no "Mapa de decisões", e a evolução medida, de `v1-coupled` à `main`, em "Métrica".
+A aplicação FastAPI do helpdesk não conhece nenhum provider: cada feature pede uma de quatro capacidades lógicas, por uma porta (`LanguageModel`) que só o adaptador `gateway` implementa, a um AI Gateway self-hosted (LiteLLM Proxy). O gateway decide o modelo físico, guarda as credenciais dos providers, aplica orçamento e limite de requisições por virtual key e cuida do timeout, das tentativas e do fallback. Trocar o modelo de uma feature é editar `gateway/config.yaml` e reiniciar só o gateway. Cada feature é entregue no modo que o seu contrato pede ([ADR 0008](docs/adr/0008-modo-de-execucao.md)): a classificação (F1) e a extração de pedido (F4) são síncronas e respondem em ~1,1 s; a sugestão de resposta (F2) chega por streaming, com o 1º trecho em ~1 s; e o relatório de temas (F3) é assíncrono, com o pedido do mês aceito em milissegundos (`202`) e o relatório entregue depois, pela URL de status. As decisões estão no "Mapa de decisões", e a evolução medida, de `v1-coupled` à `main`, em "Métrica".
 
 **Quando um provider cai, nenhuma feature para nem muda de resultado, e nenhuma requisição termina em `504` da borda.** O gateway tenta o primário (até 3 vezes em erro `5xx`, 2 em `429` e uma vez se o provider travar) e passa ao modelo `large` equivalente do outro provider; o que muda é a espera, com o 1º trecho da F2 em ~5 a 6 s em vez de 1 s. Se nenhum `large` estiver disponível, a classificação, a sugestão e o relatório respondem com o modelo `mini`, cuja saída foi medida como suficiente para cada uma, e a extração de pedido falha explicitamente com `503`, porque alimenta uma automação sem revisão humana e o `mini` erra 30% das extrações.
 
@@ -43,7 +43,7 @@ Observado:
 
 - A borda responde `504 Gateway Time-out` em **30,02 s** (pedido às 22:23:59, 504 às 22:24:29).
 - `/admin/calls` mostra **34 chamadas** `anthropic/claude-fake-large`, `task: topics`, `stream: false`, todas `200`, uma depois da outra (~9,7 s cada), da 22:24:00 até a última às 22:29:23 (terminada às 22:29:32): **~5,5 min** para o relatório inteiro.
-- **Só as 3 primeiras chamadas começaram antes do 504.** A 4ª começou às 22:24:30.065, praticamente no instante em que a borda desistiu: o horário do pedido tem resolução de segundo, então não dá para dizer de que lado do 504 ela fica. As 30 seguintes começaram com certeza depois. O `/admin/calls` registra tokens, não dinheiro; o custo abaixo aplica aos tokens registrados o preço do `claude-fake-large` na tabela de Modelos de `provider-fake/README.md` (US$ 3,00 por 1M de entrada e US$ 15,00 por 1M de saída):
+- **As 3 primeiras chamadas começaram antes do 504, e as 30 últimas, com certeza depois.** A 4ª começou às 22:24:30.065, praticamente no instante em que a borda desistiu: o horário do pedido tem resolução de segundo, então não dá para dizer de que lado do 504 ela fica. O `/admin/calls` registra tokens, não dinheiro; o custo abaixo aplica aos tokens registrados o preço do `claude-fake-large` na tabela de Modelos de `provider-fake/README.md` (US$ 3,00 por 1M de entrada e US$ 15,00 por 1M de saída):
 
   | Chamadas `topics` | Tokens de entrada | Tokens de saída | Custo |
   |---|---|---|---|
@@ -202,16 +202,7 @@ A 1ª chamada real de um processo do gateway paga uma inicialização única do 
   - O aquecimento é uma otimização. Se falhar (porta local ocupada, gateway inacessível ou sem resposta, resposta HTTP de erro ou inválida), fica registrado no log como `aquecimento falhou`, e o gateway sobe do mesmo jeito. Se o gateway parar de responder, o bootstrap desiste depois de 10 s sem receber nada. Os testes estão em `tests/gateway/test_warmup.py`.
   - Depois da subida o servidor local não existe mais, e chamar `gateway-warmup` dá erro.
 
-Medido pela borda. Uma chamada normal da F1 leva ~1,1 s, e a 1ª chamada sem aquecimento levava de ~0,5 a 3,7 s a mais:
-
-| Situação | 1ª F1, sem o aquecimento do gateway | 1ª F1, com o aquecimento | 1º trecho da 1ª F2, com o aquecimento |
-|---|---|---|---|
-| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2 amostras); 2,74 s logo depois de ligar a máquina | 1,14 / 1,24 / 1,32 / 1,35 s (4 subidas do zero, as duas últimas em clones limpos do GitHub) | 0,93 / 0,94 / 1,04 s |
-| Só o `gateway` reiniciado | 1,64 / 1,72 / 2,28 / 2,28 / **4,76 s** (5 amostras minhas); 1,7 a 2,8 s (5 amostras da revisão independente) | 1,12 / 1,15 / 1,17 / 1,28 / 1,28 s (5 amostras) | — |
-| Só o `app` reiniciado | 1,12 s (minha amostra); 1,25 a 1,67 s (3 amostras da revisão independente) | não muda: o aquecimento do gateway não age no restart do app | 0,85 a 0,93 s |
-| Chamadas seguintes | F1 ~1,1 s; F2 ~0,9 s | igual | igual |
-
-Sem o aquecimento do gateway, 1 das 10 amostras com o gateway reiniciado passou do limite de 3 s (4,76 s), e outras chegaram perto (2,8 s). As alternativas avaliadas e o motivo de cada escolha estão no [ADR 0010](docs/adr/0010-aquecimento-na-subida.md).
+Com o aquecimento, a 1ª F1 depois de uma subida do zero levou de 1,14 a 1,35 s, e o 1º trecho da 1ª F2, de 0,93 a 1,04 s. Sem ele, a 1ª F1 depois de reiniciar o gateway chegou a 4,76 s, acima do limite de 3 s. As amostras de cada situação e as alternativas avaliadas estão no [ADR 0010](docs/adr/0010-aquecimento-na-subida.md).
 
 ### Testes de caracterização
 
@@ -359,7 +350,9 @@ O máximo de 3 tentativas vale para erro `5xx`. Com outras falhas, cada destino 
 O SDK da aplicação não repete nada (`max_retries=0`): as tentativas acontecem só no gateway. Cada feature tem ainda um prazo no app para esperar o gateway (`TIMEOUT_SECONDS`): 14 s na F1 e na F4; 20 s sem receber nada na F2; 50 s por lote na F3. Estourado esse prazo, ou esgotados os destinos:
 - a F1 e a F4 respondem `503` explícito;
 - a F2 responde `503`, se nada tiver sido enviado, ou o evento `error`, se o stream já tiver começado;
-- a tarefa da F3 vai para `failed`, com o motivo. Se os destinos recusarem a entrada (`400` do gateway), ela responde `422`, porque tentar de novo não adianta.
+- a tarefa da F3 vai para `failed`, com o motivo.
+
+Se todos os destinos recusarem a entrada (`400` do gateway), a F1, a F2 e a F4 respondem `422`, porque tentar de novo não adianta. Na F3, a tarefa vai para `failed` com esse motivo.
 
 ## Tabela de fallback
 
@@ -373,6 +366,15 @@ Sem **nenhum modelo `large` disponível**, cada feature faz o que o [ADR 0004](d
 | F2 Sugerir resposta | faz o streaming da sugestão do `claude-fake-mini`, mais curta, até o `event: end` | `200` | numa amostra de 200, os mesmos passos de orientação, a mesma abertura e o mesmo fechamento, em 2/5 do tamanho; o atendente revisa antes de enviar |
 | F3 Relatório | produz o relatório com o `claude-fake-mini`: a tarefa chega a `303` → resultado | `202`, depois `303` e `200` | o mesmo relatório: 0 diferenças nos 34 lotes do mês |
 | F4 Extrair pedido | falha explícita, sem chamar o `mini`: `{"detail": "Nenhum modelo disponível...", "capability": "order-extraction", "reason": "..."}` | `503` | o `mini` erra 30,7% (pedido trocado pela nota fiscal em 14,3%, produto perdido em todos), e a saída vai para uma automação sem revisão humana |
+
+Para ficar sem nenhum `large`, derrube só os dois modelos `large`, um por provider:
+
+```sh
+curl -s -X POST localhost:8090/admin/failures -H "Content-Type: application/json"   -d '{"provider": "openai", "model": "gpt-fake-large", "mode": "error_500"}'
+curl -s -X POST localhost:8090/admin/failures -H "Content-Type: application/json"   -d '{"provider": "anthropic", "model": "claude-fake-large", "mode": "error_500"}'
+```
+
+Sem o campo `model`, a falha vale para o provider inteiro e derruba também os `mini`. Com os dois providers fora, nenhuma feature tem destino: a F1, a F2 e a F4 respondem `503`, e a tarefa da F3 vai para `failed`. Medido com os dois em `error_500`: F1 em 14,0 s, F2 em 13,6 s, F4 em 9,2 s e F3 em `failed` aos 14,2 s.
 
 ### Evidência: modelos `large` × `mini`
 
@@ -485,7 +487,7 @@ done
 curl -s -L "localhost:8000$LOC" | head -c 300
 ```
 
-Erros de entrada continuam síncronos: `422` para `start` depois de `end`, data inválida ou campo faltando. Um id desconhecido dá `404`, e pedir o resultado antes do fim dá `409`.
+Erros de entrada continuam síncronos: `422` para `start` depois de `end`, data inválida ou campo faltando. Um id desconhecido dá `404`. Pedir o resultado quando não há relatório dá `409`: com "ainda não está pronto" enquanto a tarefa roda, e com "a tarefa falhou" numa tarefa `failed`, cujo motivo fica na URL de status.
 
 Limites da F3:
 - **Memória:** as tarefas ficam na memória do `app` e somem se ele reiniciar; as 100 últimas terminadas continuam consultáveis.

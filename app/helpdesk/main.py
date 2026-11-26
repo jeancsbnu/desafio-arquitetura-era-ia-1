@@ -137,6 +137,9 @@ def topics_report_result(task_id: str) -> TopicsReport:
     report = reporter.result(task_id)
     if report is not None:
         return report
-    if reporter.status(task_id) is None:
+    status = reporter.status(task_id)
+    if status is None:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    if status.state == "failed":
+        raise HTTPException(status_code=409, detail="O relatório não foi produzido: a tarefa falhou; o motivo está na URL de status")
     raise HTTPException(status_code=409, detail="O relatório ainda não está pronto; consulte o status")

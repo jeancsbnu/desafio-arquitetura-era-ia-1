@@ -6,7 +6,7 @@
 
 ## Contexto
 
-Na v1, nenhuma chamada tinha timeout nem política de retry configurados. Valiam os padrões dos SDKs: 600 s de leitura e 2 retries. Com o provider travado, uma requisição da F1 ficou 15 min presa numa thread, e o cliente recebeu `504` da borda em 30 s (Dor 3).
+Na v1, nenhuma chamada tinha timeout nem política de retry configurados. Valiam os padrões dos SDKs: 600 s de leitura e 2 retries. Com o provider travado, uma requisição da F1 ficou 10 min presa numa thread, em duas tentativas de 300 s. A 3ª só terminou porque o provider voltou ao normal; sem isso, seriam ~15 min, por estimativa. O cliente recebeu `504` da borda em 30 s (Dor 3).
 
 No piloto da v2, com o gateway na frente, os retries se multiplicaram: o SDK da aplicação repetia o pedido inteiro ao gateway, que já repetia ao provider, e cada falha virou **9 chamadas** (Revisão 2 do plano de refatoração).
 
@@ -49,7 +49,7 @@ Aumentar um timeout de destino ou o número de destinos exige refazer essas cont
 
 ## Consequências
 
-- Melhor: o número de tentativas é limitado, previsível e declarado (por destino: 3 em `5xx`, 2 em `429`, 1 em timeout). Uma falha gera no máximo 3 chamadas por destino, como na v1, e não 9. Um provider travado custa 5 s à F1, e não 15 min.
+- Melhor: o número de tentativas é limitado, previsível e declarado (por destino: 3 em `5xx`, 2 em `429`, 1 em timeout). Uma falha gera no máximo 3 chamadas por destino, como na v1, e não 9. Um provider travado custa 5 s à F1, e não de 10 a 15 min.
 - Pior: o encadeamento até o modelo fraco é lento. Com os dois `large` em `error_500`, a F1 respondeu em 10,2 s, por causa de 6 tentativas com backoff antes do `mini`. Sem cooldown, cada requisição paga esse caminho enquanto a falha durar.
 - Resolvido no requisito 6: enquanto a F2 era síncrona, um primário travado a fazia esperar 28 s até o `503`. Com o streaming (ADR 0008), o gateway desiste do primário em 5 s sem o 1º trecho, e o stream completo chega pelo fallback, com o 1º trecho em ~6 s.
 
@@ -61,6 +61,8 @@ Medido pela borda, com `/admin/calls`:
 |---|---|---|
 | `openai` em `error_500` | F1 `200` em 5,5 s | `gpt-fake-large:500` ×3 e depois `claude-fake-large:200` |
 | `openai` em `error_429` | F1 `200` em 6,2 s | `gpt-fake-large:429` ×2 e depois `claude-fake-large:200` |
+| `anthropic` em `error_429` | 1º trecho da F2 em 5,4 s; F3 (1 dia) `303` aos 14,7 s | `claude-fake-large:429` ×2 e depois `gpt-fake-large:200` |
+| Os dois providers travados (`timeout`) | F1 `503` em 14,2 s; F4 `503` em 10,1 s; F2 `503` em 15,1 s, antes do 1º trecho | 1 chamada `504` em cada destino |
 | Os dois `large` em `error_429`, com 2 retries em `429` (antes) | F1 `503` em 14,3 s: o prazo da F1 acabou antes de o gateway chegar ao `mini`; F4 `503` em 13,9 s | `gpt-fake-large:429` ×3, `claude-fake-large:429` ×3, e nenhuma chamada ao `mini` |
 | Os dois `large` em `error_429`, com 1 retry (agora) | F1 `200` em 9,9 s, pelo `mini`; F4 `503` em 9,5 s; 1º trecho da F2 em 9,9 s; F3 `303` aos 12,2 s | `429` ×2 em cada `large` e depois o `mini` (na F4, nenhuma chamada ao `mini`) |
 | `openai` em `timeout` | F1 `200` em 6,3 s; F4 `200` em 6,2 s | `gpt-fake-large:504` 1 vez e depois `claude-fake-large:200`. Não houve retry. O `504` é o status que o provider vai devolver ao fim dos 300 s; o `/admin/calls` o registra já no recebimento, mas o gateway desistiu em 5 s |

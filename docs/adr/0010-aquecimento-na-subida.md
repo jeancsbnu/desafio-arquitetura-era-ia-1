@@ -62,7 +62,14 @@ Medido pela borda, com o aquecimento:
 - depois de `down` + `up`, 1ª F1 em 1,14 a 1,35 s e 1º trecho da F2 em 0,93 a 1,04 s, com 0 chamadas em `/admin/calls` depois da subida;
 - no log do gateway, `[bootstrap_keys] aquecimento: HTTP 200 em ...`.
 
-As amostras de cada situação estão no README ("A primeira chamada depois da subida").
+Amostras de cada situação (uma chamada normal da F1 leva ~1,1 s):
+
+| Situação | 1ª F1, sem o aquecimento do gateway | 1ª F1, com o aquecimento | 1º trecho da 1ª F2, com o aquecimento |
+|---|---|---|---|
+| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2 amostras); 2,74 s logo depois de ligar a máquina | 1,14 / 1,24 / 1,32 / 1,35 s (4 subidas do zero, as duas últimas em clones limpos do GitHub) | 0,93 / 0,94 / 1,04 s |
+| Só o `gateway` reiniciado | 1,64 / 1,72 / 2,28 / 2,28 / **4,76 s** (5 amostras minhas); 1,7 a 2,8 s (5 amostras da revisão independente) | 1,12 / 1,15 / 1,17 / 1,28 / 1,28 s (5 amostras) | — |
+| Só o `app` reiniciado | 1,12 s (minha amostra); 1,25 a 1,67 s (3 amostras da revisão independente) | não muda: o aquecimento do gateway não age no restart do app | 0,85 a 0,93 s |
+| Chamadas seguintes | F1 ~1,1 s; F2 ~0,9 s | igual | igual |
 
 Cada cenário de falha é um teste em `tests/gateway/test_warmup.py`, que roda sem Docker (`python -m pytest tests/gateway`). Os testes de `main()` conferem também o outro lado: sem as chaves aplicadas, o arquivo de pronto não é gravado. Rodados contra versões anteriores do bootstrap:
 - contra a do PR #2, falham 4 testes:

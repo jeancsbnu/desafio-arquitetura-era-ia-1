@@ -56,7 +56,7 @@ Nenhuma herança nova: os adaptadores implementam as portas e são entregues às
 
 A refatoração está pronta quando todos os itens abaixo forem verdadeiros. Os testes e a métrica são o juiz: o que o agente produzir só é aceito se passar por eles.
 
-1. **Comportamento:** `python -m pytest tests/characterization` passa, e `git diff v1-coupled -- tests/characterization/` não mostra diferença.
+1. **Comportamento:** `python -m pytest tests/characterization` passa, e `git diff v1-coupled -- tests/characterization/` não mostra diferença. (Na `main`, a suíte da F2 e da F3 mudou no requisito 6; a comparação entre as tags é `git diff v1-coupled v2-decoupled -- tests/characterization/`.)
 2. **Métrica:** nenhum componente na zona de dor (A < 0,5, I < 0,5 e D ≥ 0,5), exceto `schemas`. O componente que chama o gateway e os componentes das features não podem estar lá.
 3. **Direção das dependências:** o SDK é importado por um único componente (`gateway`), e só `main` importa esse componente. Nenhuma feature importa um adaptador: o Ce de cada feature está contido em {`ports`, `schemas`}.
 4. **Gateway:** `grep -rE "gpt-fake|claude-fake" app/` e `grep -rE "FAKE_OPENAI_KEY|FAKE_ANTHROPIC_KEY|sk-fake-openai|sk-ant-fake" app/` não retornam nada, e o serviço `app` em `docker compose config` não recebe as chaves dos providers.
@@ -97,6 +97,8 @@ O que saiu como esperado: o Ce de `classification` virou {`ports`, `schemas`}, `
 - **A porta passa a exigir a implementação.** Este ponto foi corrigido depois da revisão independente (ver "Revisão independente da escala"). A primeira versão afirmava que declarar a porta "verificava a conformidade", e isso era falso: em Python, `class X(Porta)` sozinha não verifica nada, e um adaptador que esquecesse `complete` herdaria o corpo vazio da porta e devolveria `None`. Os métodos das portas passaram a ser `@abstractmethod` (o `Protocol` já usa `ABCMeta`). Agora, um adaptador que declara a porta e não implementa um método levanta `TypeError` ao ser instanciado em `main`, e a aplicação não sobe. Isso vai importar quando a porta crescer, com o streaming do requisito 6.
 
 **O que o número diz e o que não diz.** O `gateway` e o `tickets` ficaram com I 0,50 e D 0,50: fora da zona de dor, mas exatamente na fronteira, porque a zona exige I < 0,5. Qualquer adaptador com um dependente (`main`) e uma dependência (a porta) cai nesse ponto. A melhora de D (de 1,00 para 0,50) não prova sozinha que o acoplamento caiu. O que caiu de fato é que nenhuma feature depende mais de um componente concreto.
+
+**Como reproduzir o piloto como escrito.** Esse estado não foi commitado: o commit do piloto (`8d28f1e`) já traz a revisão. Para refazer a medição, parta de `8d28f1e` e, em `app/helpdesk/gateway.py`, apague `from .ports import LanguageModel` e troque `class GatewayLanguageModel(LanguageModel):` por `class GatewayLanguageModel:`. Depois rode `python metrics/coupling.py app/helpdesk pilot-classification --out <pasta>`: o CSV e o gráfico saem iguais aos versionados ([pilot-classification.csv](../metrics/results/pilot-classification.csv)). Sem essa troca, o mesmo comando reproduz o piloto revisado.
 
 ### Revisão 2: retry num lugar só
 
@@ -147,7 +149,7 @@ O brief não continha a métrica esperada nem as conclusões do piloto além do 
 
 Li também o diff das 4 features contra a v1. Prompts, validações (`422` e `502`), lotes de 150, soma por tema, corte em 3 exemplos e ordenação ficaram iguais. Nas features, a única mudança é de onde vêm o modelo e os tickets. Uma diferença que estava no adaptador do piloto, e não nas features, passou nesta leitura e foi apontada pela revisão independente: o `max_tokens` (Revisão 3).
 
-**Aceito ou rejeitado.** Nesta rodada, nada do que o agente produziu precisou ser rejeitado. A rejeição que houve no processo foi do próprio piloto: a métrica reprovou o adaptador implementado só estruturalmente (Revisão 1), e a contagem de chamadas no `/admin/calls` reprovou os retries do SDK (Revisão 2). As duas correções entraram no plano antes do handoff, e por isso o agente já recebeu o padrão corrigido.
+**Aceito ou rejeitado.** O critério de rejeição estava definido antes do handoff: a escala seria rejeitada se falhasse em qualquer um dos 6 critérios de pronto revisados. Os exemplos são um teste de caracterização falhando, uma feature com Ce fora de {`ports`, `schemas`} no CSV da métrica, um componente além de `schemas` na zona de dor ou mais de 3 chamadas por requisição com o provider em `error_500`. Nesta rodada, nada do que o agente produziu precisou ser rejeitado. A rejeição que houve no processo foi do próprio piloto: a métrica reprovou o adaptador implementado só estruturalmente (Revisão 1), e a contagem de chamadas no `/admin/calls` reprovou os retries do SDK (Revisão 2). As duas correções entraram no plano antes do handoff, e por isso o agente já recebeu o padrão corrigido.
 
 ## Revisão independente da escala
 
@@ -170,7 +172,7 @@ O que ele apontou e o que foi feito:
 | `handoff-brief.md` expunha um caminho local da máquina | Trocado por um marcador, com aviso no topo do brief |
 | `app` dependia de `provider-fake` no compose sem falar mais com ele | `depends_on` só no `gateway` |
 | Master key no `app` sem aviso de que é provisório | Aviso no plano e no `compose.yaml` |
-| O ADR da métrica que vai declarar `schemas` ainda não existe | Pendência registrada no README. É critério da `main`, não da tag |
+| O ADR da métrica que vai declarar `schemas` ainda não existe | Era critério da `main`, não da tag. Resolvido na `main` pelo [ADR 0009](adr/0009-leitura-da-metrica.md) |
 
 Depois das correções: a suíte passou de novo (30), a métrica reproduziu o CSV e o SVG da v2 byte a byte (as correções não mudam nenhum import nem nenhuma classe), e a contagem de tentativas com cada provider em `error_500` continuou em 3.
 
@@ -186,7 +188,7 @@ Medição com o mesmo script ([CSV](../metrics/results/v2-decoupled.csv), [gráf
 | `main` | 0 | 7 | 1,00 | 0,00 | 0,00 | |
 | `ports` | 6 | 0 | 0,00 | 1,00 | 0,00 | |
 | `report` | 1 | 2 | 0,67 | 0,00 | 0,33 | |
-| `schemas` | 5 | 0 | 0,00 | 0,00 | 1,00 | sim, estável por natureza (a declarar no ADR da métrica) |
+| `schemas` | 5 | 0 | 0,00 | 0,00 | 1,00 | sim, estável por natureza (declarado depois, no [ADR 0009](adr/0009-leitura-da-metrica.md)) |
 | `suggestion` | 1 | 2 | 0,67 | 0,00 | 0,33 | |
 | `tickets` | 1 | 1 | 0,50 | 0,00 | 0,50 | |
 
