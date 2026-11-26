@@ -68,14 +68,23 @@ Formas avaliadas, e a escolhida:
   Limites:
   - a chave do app não enxerga esse destino;
   - no registro de gasto do gateway fica uma linha de custo 0 por subida, feita com a master key;
-  - se o aquecimento falhar, ele só registra no log e o gateway sobe do mesmo jeito, com no máximo 10 s de atraso. O arquivo de pronto é gravado num `finally`. Isso vale para a porta local 4099 ocupada, o gateway inacessível ou que aceita e não responde, uma resposta `200` que não é JSON, a thread do servidor local que não inicia e uma `BaseException`;
+  - se o aquecimento falhar, ele registra `aquecimento falhou` no log e o gateway sobe do mesmo jeito. O arquivo de pronto é gravado num `finally`. Isso vale para a porta local 4099 ocupada, o gateway inacessível ou que aceita e não responde, uma resposta HTTP de erro, uma resposta `200` que não é JSON, a thread do servidor local que não inicia e uma `BaseException`;
+  - se o gateway parar de responder, o bootstrap desiste depois de 10 s sem receber nada. O prazo do `urlopen` vale para a conexão e para cada leitura, e não para a chamada inteira: um gateway que mandasse a resposta aos poucos poderia passar disso;
   - depois da subida o servidor local não existe mais, e chamar `gateway-warmup` dá erro.
 
-  Esses limites vieram de duas revisões independentes:
+  Esses limites vieram de três revisões independentes:
   - a revisão do PR #1 achou casos que impediam o gateway de ficar saudável;
-  - a revisão do PR #2 achou mais dois: a `BaseException` e um `shutdown()` que travava quando a thread não iniciava.
+  - a revisão do PR #2 achou mais dois: a `BaseException` e um `shutdown()` que travava quando a thread não iniciava;
+  - a revisão do PR #3 achou uma resposta HTTP de erro registrada no log como se fosse sucesso, e um teste que falhava às vezes no Linux.
 
-  Cada cenário é um teste em `tests/gateway/test_warmup.py`, que roda sem Docker (`python -m pytest tests/gateway`). Rodados contra o bootstrap do PR #2, os testes da `BaseException` e da thread falham; com a correção, os 7 passam.
+  Cada cenário é um teste em `tests/gateway/test_warmup.py`, que roda sem Docker (`python -m pytest tests/gateway`). Os testes de `main()` conferem também o outro lado: sem as chaves aplicadas, o arquivo de pronto não é gravado.
+
+  Rodados contra versões anteriores do bootstrap:
+  - contra a do PR #2, falham 4 testes:
+    - os da `BaseException`, da thread e do HTTP de erro, que são os defeitos corrigidos depois;
+    - o do gateway que aceita e não responde, só porque o PR #2 tinha o prazo fixo de 10 s e o teste o reduz para 1 s;
+  - contra a do PR #3, falha só o do HTTP de erro;
+  - com a versão atual, os 10 passam, no Windows e no Linux (20 execuções seguidas no WSL).
 
 Streaming muda a espera percebida, mas não a duração: a conexão fica aberta os ~16 s. É aceitável, porque há alguém lendo durante todo esse tempo, e os trechos chegam a cada ~25 ms, muito antes dos 30 s da borda.
 

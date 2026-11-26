@@ -217,7 +217,7 @@ A 1ª chamada real de um processo do gateway paga uma inicialização única do 
 - **o `gateway`** (`gateway/bootstrap_keys.py`) sobe por alguns segundos um servidor local, dentro do próprio container, que responde no formato da OpenAI. Em seguida, chama o destino interno `gateway-warmup`, que aponta para esse servidor.
   - A chamada percorre o caminho completo do gateway sem chegar ao provider e sem nada em `/admin/calls`. No registro de gasto do próprio gateway, ela deixa uma linha de custo 0 por subida, feita com a master key.
   - O `gateway-warmup` aparece em `/models` só para a master key; a chave do app não o vê.
-  - O aquecimento é uma otimização. Se falhar (porta local ocupada, gateway inacessível ou sem resposta, resposta inválida), só fica registrado no log, e o gateway sobe do mesmo jeito, com no máximo 10 s de atraso. Os testes estão em `tests/gateway/test_warmup.py`.
+  - O aquecimento é uma otimização. Se falhar (porta local ocupada, gateway inacessível ou sem resposta, resposta HTTP de erro ou inválida), fica registrado no log como `aquecimento falhou`, e o gateway sobe do mesmo jeito. Se o gateway parar de responder, o bootstrap desiste depois de 10 s sem receber nada. Os testes estão em `tests/gateway/test_warmup.py`.
   - Depois da subida o servidor local não existe mais, e chamar `gateway-warmup` dá erro.
 
 Medido pela borda. Uma chamada normal da F1 leva ~1,1 s, e a 1ª chamada sem aquecimento levava de ~0,5 a 3,7 s a mais:
@@ -269,10 +269,12 @@ python -m pytest tests/flows -m "not slow"    # ~2 min, sem ele
 
 ### Testes do aquecimento do gateway
 
-`tests/gateway/test_warmup.py` testa, sem Docker, que o aquecimento do gateway (ver "A primeira chamada depois da subida") nunca impede a subida. São 7 testes: o caminho normal e cada cenário de falha.
+`tests/gateway/test_warmup.py` testa, sem Docker, que o aquecimento do gateway (ver "A primeira chamada depois da subida") nunca impede a subida. São 10 testes:
+- o caminho normal e cada cenário de falha do aquecimento;
+- quando o arquivo de pronto é gravado: depois das chaves e do aquecimento, mesmo que o aquecimento falhe, e nunca sem as chaves aplicadas.
 
 ```sh
-python -m pytest tests/gateway    # ~5 s
+python -m pytest tests/gateway    # ~6 s
 ```
 
 A suíte de caracterização detecta a troca de um `large` por um `mini` em F2 e F4. Com o `mini`, a sugestão da F2 muda, e 5 dos 7 tickets do dataset da F4 dão outro resultado: por exemplo, o `TK-00002` devolve a nota fiscal `#530720` no lugar do pedido. Em F1 e F3, o `mini` dá a mesma saída (ver "Evidência: modelos `large` × `mini`").

@@ -83,9 +83,10 @@ model_list:
   # completo do gateway (cliente HTTP, resposta, custo, registro de gasto) sem chegar ao provider e
   # sem aparecer em /admin/calls; no registro de gasto do gateway fica uma linha de custo 0 por
   # subida. A aplicação não o alcança (a chave dela só vê as 4 capacidades). Herda as tentativas
-  # globais, que só repetem em 5xx, 429 ou timeout: o servidor local responde 200 na hora, então
-  # não há repetição; se algo der errado, o bootstrap desiste em 10 s e a subida segue. Depois da
-  # subida o servidor local não existe mais, e chamar este destino dá erro.
+  # globais, que só repetem em 5xx ou 429: o servidor local responde 200 na hora, então não há
+  # repetição; se algo der errado, o bootstrap registra a falha no log (desiste depois de 10 s
+  # sem resposta) e a subida segue. Depois da subida o servidor local não existe mais, e chamar
+  # este destino dá erro.
   - model_name: gateway-warmup
     litellm_params:
       model: openai/gateway-warmup
