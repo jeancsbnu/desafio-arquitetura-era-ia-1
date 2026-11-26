@@ -68,7 +68,14 @@ Formas avaliadas, e a escolhida:
   Limites:
   - a chave do app não enxerga esse destino;
   - no registro de gasto do gateway fica uma linha de custo 0 por subida, feita com a master key;
-  - se o aquecimento falhar, inclusive com a porta local 4099 ocupada ou uma resposta inválida, ele só registra no log e o gateway sobe do mesmo jeito. A 1ª versão não cobria esses casos: a revisão independente do PR #1 apontou que eles impediriam o gateway de ficar saudável, e a correção foi testada simulando cada um.
+  - se o aquecimento falhar, ele só registra no log e o gateway sobe do mesmo jeito, com no máximo 10 s de atraso. O arquivo de pronto é gravado num `finally`. Isso vale para a porta local 4099 ocupada, o gateway inacessível ou que aceita e não responde, uma resposta `200` que não é JSON, a thread do servidor local que não inicia e uma `BaseException`;
+  - depois da subida o servidor local não existe mais, e chamar `gateway-warmup` dá erro.
+
+  Esses limites vieram de duas revisões independentes:
+  - a revisão do PR #1 achou casos que impediam o gateway de ficar saudável;
+  - a revisão do PR #2 achou mais dois: a `BaseException` e um `shutdown()` que travava quando a thread não iniciava.
+
+  Cada cenário é um teste em `tests/gateway/test_warmup.py`, que roda sem Docker (`python -m pytest tests/gateway`). Rodados contra o bootstrap do PR #2, os testes da `BaseException` e da thread falham; com a correção, os 7 passam.
 
 Streaming muda a espera percebida, mas não a duração: a conexão fica aberta os ~16 s. É aceitável, porque há alguém lendo durante todo esse tempo, e os trechos chegam a cada ~25 ms, muito antes dos 30 s da borda.
 
