@@ -53,7 +53,7 @@ O app abre a conexão com o gateway já na subida (`GET /models` com a sua chave
 
 O custo é pago uma vez por processo, qualquer que seja o destino. Depois de reiniciar o gateway, a 1ª chamada à F4 levou 1,55 a 2,28 s, e a F1 (outro destino) e a F2 (outro provider), logo em seguida, já saíram em ~1,15 s.
 
-Sem aquecimento, a 1ª F1 depois de reiniciar o gateway levou de 1,64 a **4,76 s**. Esse pico passa do limite de 3 s, e a revisão independente mediu 1,7 a 2,8 s. Por isso o aquecimento virou parte da subida, e não um detalhe de desempenho.
+Sem aquecimento, a 1ª F1 depois de reiniciar o gateway levou de 1,64 a 4,76 s nas minhas 5 amostras, e de 1,7 a 2,8 s nas 5 da revisão independente. Isso é ~0,5 a 3,7 s a mais que a chamada normal de ~1,1 s. Só 1 das 10 amostras passou do limite de 3 s (4,76 s), mas outras chegaram perto. A margem depende da carga da máquina, e por isso o aquecimento virou parte da subida, e não um detalhe de desempenho.
 
 Formas avaliadas, e a escolhida:
 - **Resposta simulada do LiteLLM (`mock_response`)**, por uma chave interna autorizada. Não chega ao provider, mas pula justamente a chamada HTTP, que é o que custa. Medido: a 1ª F1 foi de 1,60 s para 1,55 s. Descartada.
@@ -65,7 +65,10 @@ Formas avaliadas, e a escolhida:
   - depois de `down` + `up`, 1ª F1 em 1,14 s e 1º trecho da F2 em 0,93 s;
   - 0 chamadas em `/admin/calls` depois da subida.
 
-  A chave do app não enxerga esse destino, e se o aquecimento falhar o gateway sobe do mesmo jeito.
+  Limites:
+  - a chave do app não enxerga esse destino;
+  - no registro de gasto do gateway fica uma linha de custo 0 por subida, feita com a master key;
+  - se o aquecimento falhar, inclusive com a porta local 4099 ocupada ou uma resposta inválida, ele só registra no log e o gateway sobe do mesmo jeito. A 1ª versão não cobria esses casos: a revisão independente do PR #1 apontou que eles impediriam o gateway de ficar saudável, e a correção foi testada simulando cada um.
 
 Streaming muda a espera percebida, mas não a duração: a conexão fica aberta os ~16 s. É aceitável, porque há alguém lendo durante todo esse tempo, e os trechos chegam a cada ~25 ms, muito antes dos 30 s da borda.
 

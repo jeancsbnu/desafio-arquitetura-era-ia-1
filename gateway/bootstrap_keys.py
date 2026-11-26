@@ -3,11 +3,13 @@
 Roda dentro do container do gateway, em paralelo ao LiteLLM (ver start.sh):
 1. para cada chave: cria se não existir, atualiza os limites se já existir;
 2. aquece o gateway: a 1ª chamada real de um processo do LiteLLM paga uma inicialização única
-   (medida entre ~0,5 e 3,7 s), qualquer que seja o destino. O bootstrap sobe por alguns segundos
-   um servidor local que responde no formato da OpenAI e chama o destino `gateway-warmup`
-   (config.yaml), que aponta para ele: a inicialização acontece aqui, e não na 1ª requisição de
-   um cliente, sem chegar ao provider e sem nada em /admin/calls;
+   (medida entre ~0,5 e 3,7 s a mais que uma chamada normal), qualquer que seja o destino. O
+   bootstrap sobe por alguns segundos um servidor local que responde no formato da OpenAI e chama
+   o destino `gateway-warmup` (config.yaml), que aponta para ele: a inicialização acontece aqui, e
+   não na 1ª requisição de um cliente, sem chegar ao provider e sem nada em /admin/calls. É uma
+   otimização: qualquer falha nela é registrada no log e a subida segue;
 3. grava /tmp/keys-ready, que o healthcheck do serviço exige: o gateway só fica saudável depois.
+   Sem as chaves o app não funciona, então uma falha no passo 1 interrompe a subida.
 """
 
 import json
@@ -78,7 +80,10 @@ class _CompletionStub(BaseHTTPRequestHandler):
     """Responde qualquer POST com uma completion mínima no formato da OpenAI."""
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        try:
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        except ValueError:
+            pass
         body = json.dumps({
             "id": "warmup", "object": "chat.completion", "created": int(time.time()),
             "model": "gateway-warmup",
@@ -97,21 +102,24 @@ class _CompletionStub(BaseHTTPRequestHandler):
 
 
 def warm_up() -> None:
-    """Otimização: se algo falhar aqui, o gateway sobe do mesmo jeito, só com a 1ª chamada mais
-    lenta."""
-    server = ThreadingHTTPServer(("127.0.0.1", WARMUP_PORT), _CompletionStub)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    """Otimização: nunca levanta exceção. Se algo falhar (inclusive a porta local ocupada), só
+    registra no log, e o gateway sobe do mesmo jeito, com a 1ª chamada mais lenta."""
+    server = None
     try:
+        server = ThreadingHTTPServer(("127.0.0.1", WARMUP_PORT), _CompletionStub)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
         start = time.perf_counter()
         status, _ = call("POST", "/chat/completions", {
             "model": "gateway-warmup", "messages": [{"role": "user", "content": "aquecimento"}],
         })
         print(f"[bootstrap_keys] aquecimento: HTTP {status} em {time.perf_counter() - start:.2f} s", flush=True)
-    except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
-        print(f"[bootstrap_keys] aquecimento falhou: {error}", flush=True)
+    except Exception as error:  # noqa: BLE001 - qualquer falha aqui não pode impedir a subida
+        print(f"[bootstrap_keys] aquecimento falhou ({type(error).__name__}: {error}); seguindo sem ele",
+              flush=True)
     finally:
-        server.shutdown()
-        server.server_close()
+        if server is not None:
+            server.shutdown()
+            server.server_close()
 
 
 def main() -> None:
