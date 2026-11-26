@@ -47,51 +47,14 @@ Para o texto chegar aos poucos, nada no caminho pode acumular a resposta:
 - o gateway repassa os trechos;
 - não há middleware de compressão.
 
-O app abre a conexão com o gateway já na subida (`GET /models` com a sua chave, o que também passa pela autenticação do gateway). Sem isso, a 1ª requisição depois de reiniciar o `app` levava 1,35 s até o 1º trecho, perto do limite.
-
-**O gateway também se aquece na subida.** A 1ª chamada real de um processo do LiteLLM paga uma inicialização única, que o `/admin/calls` mostrou não ser do provider: ele levou sempre 1.076 ms. Os headers `x-litellm-*` mostraram que também não é o overhead do LiteLLM (4 a 57 ms), e sim o caminho da chamada HTTP.
-
-O custo é pago uma vez por processo, qualquer que seja o destino. Depois de reiniciar o gateway, a 1ª chamada à F4 levou 1,55 a 2,28 s, e a F1 (outro destino) e a F2 (outro provider), logo em seguida, já saíram em ~1,15 s.
-
-Sem aquecimento, a 1ª F1 depois de reiniciar o gateway levou de 1,64 a 4,76 s nas minhas 5 amostras, e de 1,7 a 2,8 s nas 5 da revisão independente. Isso é ~0,5 a 3,7 s a mais que a chamada normal de ~1,1 s. Só 1 das 10 amostras passou do limite de 3 s (4,76 s), mas outras chegaram perto. A margem depende da carga da máquina, e por isso o aquecimento virou parte da subida, e não um detalhe de desempenho.
-
-Formas avaliadas, e a escolhida:
-- **Resposta simulada do LiteLLM (`mock_response`)**, por uma chave interna autorizada. Não chega ao provider, mas pula justamente a chamada HTTP, que é o que custa. Medido: a 1ª F1 foi de 1,60 s para 1,55 s. Descartada.
-- **Endpoints que não chamam modelo** (`/health/readiness`, `/models`, `/key/info`), ou um `start_period` maior no healthcheck. Não percorrem o caminho da chamada; o `/models` já é o que o app usa. Descartados.
-- **Chamadas reais ao provider na subida.** Aqueceriam tudo, mas apareceriam no `/admin/calls`, que é o instrumento usado para contar tentativas e conferir modelos. Descartadas.
-- **Destino apontando para um caminho do provider que não é de inferência** (`/warmup`, que responde `404` sem registro). Medido: aquecimento parcial, com a 1ª F1 em 1,44 s, porque a resposta de erro não percorre a parte de sucesso (leitura da resposta, custo, registro de gasto). Substituída pela opção seguinte.
-- **Escolhida: um servidor local dentro do container do gateway.** O `bootstrap_keys.py` o sobe por alguns segundos, e ele responde no formato da OpenAI. O destino interno `gateway-warmup` aponta para ele. A 1ª chamada percorre o caminho completo do gateway, inclusive o de sucesso, sem chegar ao provider. Medido:
-  - depois de reiniciar o gateway, 1ª F1 em 1,12 a 1,17 s (3 amostras);
-  - depois de `down` + `up`, 1ª F1 em 1,14 s e 1º trecho da F2 em 0,93 s;
-  - 0 chamadas em `/admin/calls` depois da subida.
-
-  Limites:
-  - a chave do app não enxerga esse destino;
-  - no registro de gasto do gateway fica uma linha de custo 0 por subida, feita com a master key;
-  - se o aquecimento falhar, ele registra `aquecimento falhou` no log e o gateway sobe do mesmo jeito. O arquivo de pronto é gravado num `finally`. Isso vale para a porta local 4099 ocupada, o gateway inacessível ou que aceita e não responde, uma resposta HTTP de erro, uma resposta `200` que não é JSON, a thread do servidor local que não inicia e uma `BaseException`;
-  - se o gateway parar de responder, o bootstrap desiste depois de 10 s sem receber nada. O prazo do `urlopen` vale para a conexão e para cada leitura, e não para a chamada inteira: um gateway que mandasse a resposta aos poucos poderia passar disso;
-  - depois da subida o servidor local não existe mais, e chamar `gateway-warmup` dá erro.
-
-  Esses limites vieram de três revisões independentes:
-  - a revisão do PR #1 achou casos que impediam o gateway de ficar saudável;
-  - a revisão do PR #2 achou mais dois: a `BaseException` e um `shutdown()` que travava quando a thread não iniciava;
-  - a revisão do PR #3 achou uma resposta HTTP de erro registrada no log como se fosse sucesso, e um teste que falhava às vezes no Linux.
-
-  Cada cenário é um teste em `tests/gateway/test_warmup.py`, que roda sem Docker (`python -m pytest tests/gateway`). Os testes de `main()` conferem também o outro lado: sem as chaves aplicadas, o arquivo de pronto não é gravado.
-
-  Rodados contra versões anteriores do bootstrap:
-  - contra a do PR #2, falham 4 testes:
-    - os da `BaseException`, da thread e do HTTP de erro, que são os defeitos corrigidos depois;
-    - o do gateway que aceita e não responde, só porque o PR #2 tinha o prazo fixo de 10 s e o teste o reduz para 1 s;
-  - contra a do PR #3, falha só o do HTTP de erro;
-  - com a versão atual, os 10 passam, no Windows e no Linux (20 execuções seguidas no WSL).
+A 1ª requisição depois de uma subida também cumpre os prazos da F1 e da F2 (3 s e 1,5 s até o 1º trecho): o app e o gateway se aquecem na subida ([ADR 0010](0010-aquecimento-na-subida.md)).
 
 Streaming muda a espera percebida, mas não a duração: a conexão fica aberta os ~16 s. É aceitável, porque há alguém lendo durante todo esse tempo, e os trechos chegam a cada ~25 ms, muito antes dos 30 s da borda.
 
 O 1º trecho em menos de 1 s vale com o provider normal. Quando o gateway precisa de outro destino, a troca acontece antes do 1º trecho, e ele atrasa:
 - ~5,2 s com o primário em `error_500`;
 - ~6,0 s com o primário travado;
-- ~10,4 s sem nenhum `large`.
+- ~10,4 a 11,8 s sem nenhum `large`.
 
 Depois que o texto começou, não há troca de destino: uma falha no meio do stream vira o evento `error`. Isso é o que o contrato pede, porque o atendente já está lendo um texto que não pode ser emendado com o de outro modelo.
 

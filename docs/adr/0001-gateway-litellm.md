@@ -31,7 +31,7 @@ LiteLLM Proxy, imagem `ghcr.io/berriai/litellm:v1.102.1`, como serviço `gateway
 ## Consequências
 
 - Melhor: credencial, escolha do modelo, custo, limites e resiliência ficam num lugar só. A aplicação pede uma capacidade (ADR 0003), e trocar o modelo físico é editar `gateway/config.yaml` e reiniciar só o `gateway`.
-- Pior: mais um componente para operar. A imagem tem ~1,6 GB, e a subida com banco leva ~2 a 3 min. O gateway é um ponto único de falha no compose (uma réplica). As virtual keys exigem um banco (ADR 0007).
+- Pior: mais um componente para operar. A imagem tem ~1,6 GB, e a subida com banco leva de ~1,5 a 3,5 min. O gateway é um ponto único de falha no compose (uma réplica). As virtual keys exigem um banco (ADR 0007).
 - Passa a ser necessário declarar o preço de cada modelo simulado. Sem isso, o LiteLLM calcula custo zero e nenhum orçamento estoura.
 
 ## Evidência

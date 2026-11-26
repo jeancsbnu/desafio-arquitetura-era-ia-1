@@ -32,7 +32,7 @@ Uma capacidade lógica por feature. A aplicação conhece só estes 4 nomes (con
 ## Consequências
 
 - Melhor: trocar o modelo de uma feature não afeta as outras. A política de fallback e os timeouts são por feature. A aplicação não conhece provider, modelo, preço nem parâmetros de API.
-- Pior: a configuração tem 11 destinos para 4 capacidades, mais o destino interno de aquecimento (`gateway-warmup`, ADR 0008), que não é capacidade e só o bootstrap usa. As âncoras YAML evitam repetir endereço, credencial e preço, mas quem edita precisa entender a convenção.
+- Pior: a configuração tem 11 destinos para 4 capacidades, mais o destino interno de aquecimento (`gateway-warmup`, ADR 0010), que não é capacidade e só o bootstrap usa. As âncoras YAML evitam repetir endereço, credencial e preço, mas quem edita precisa entender a convenção.
 - Uma nova feature exige uma nova capacidade no gateway e na chave do app (`gateway/keys.yaml`).
 
 ## Evidência

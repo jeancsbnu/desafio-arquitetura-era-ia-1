@@ -29,7 +29,8 @@ Opção 3, com cada mecanismo num lugar declarado:
 | Mecanismo | Onde | Valor |
 |---|---|---|
 | Timeout por tentativa (segundos sem bytes do provider) | `gateway/config.yaml`, por capacidade | F1 e F4: 5 s. F2 (streaming): 5 s até o 1º trecho. F3: 15 s por lote, para 3 destinos caberem nos 60 s em que uma tarefa sem saída precisa chegar a `failed` (ADR 0008) |
-| Retry de falha transitória (`5xx` e `429`) | `gateway/config.yaml`, `retry_policy` | 2 retries com backoff exponencial do LiteLLM: **até 3 tentativas por destino** |
+| Retry de erro do provider (`5xx`) | `gateway/config.yaml`, `retry_policy` | 2 retries com backoff exponencial do LiteLLM: **até 3 tentativas por destino** |
+| Retry de limite do provider (`429`) | `gateway/config.yaml`, `RateLimitErrorRetries: 1` | 1 retry, e o LiteLLM espera o `Retry-After` que o provider manda (2 s no provider simulado): **até 2 tentativas por destino**. Com 2 retries, como no `5xx`, os dois `large` em `429` levavam a cadeia além dos 14 s da F1 antes de chegar ao modelo fraco (ver Evidência) |
 | Retry de timeout | `gateway/config.yaml`, `TimeoutErrorRetries: 0` | nenhum: um provider travado não é transitório dentro do orçamento de latência, então vai direto ao próximo destino (**1 tentativa por destino**) |
 | Retry de erro não transitório (`400`, `401`) | `gateway/config.yaml` | nenhum, **1 tentativa por destino**. O LiteLLM ainda aplica a lista de fallbacks a esses erros: uma entrada maior que o contexto passa pelos 3 destinos, 1 chamada em cada. Tentei desligar isso com `context_window_fallbacks`, mas o LiteLLM não reconhece o `400` do provider simulado como erro de contexto, então a configuração não teve efeito e foi removida |
 | Entrada recusada por todos os destinos (`400` final do gateway) | `app/helpdesk/gateway.py` e `main.py` | o adaptador levanta `ModelRejectedInput`, e `main` responde `422`: tentar de novo não adianta |
@@ -48,7 +49,7 @@ Aumentar um timeout de destino ou o número de destinos exige refazer essas cont
 
 ## Consequências
 
-- Melhor: o número de tentativas é limitado, previsível e declarado (3 por destino em falha transitória, 1 em timeout). Uma falha gera 3 chamadas por destino, como na v1, e não 9. Um provider travado custa 5 s à F1, e não 15 min.
+- Melhor: o número de tentativas é limitado, previsível e declarado (por destino: 3 em `5xx`, 2 em `429`, 1 em timeout). Uma falha gera no máximo 3 chamadas por destino, como na v1, e não 9. Um provider travado custa 5 s à F1, e não 15 min.
 - Pior: o encadeamento até o modelo fraco é lento. Com os dois `large` em `error_500`, a F1 respondeu em 10,2 s, por causa de 6 tentativas com backoff antes do `mini`. Sem cooldown, cada requisição paga esse caminho enquanto a falha durar.
 - Resolvido no requisito 6: enquanto a F2 era síncrona, um primário travado a fazia esperar 28 s até o `503`. Com o streaming (ADR 0008), o gateway desiste do primário em 5 s sem o 1º trecho, e o stream completo chega pelo fallback, com o 1º trecho em ~6 s.
 
@@ -59,6 +60,9 @@ Medido pela borda, com `/admin/calls`:
 | Cenário | Resultado | `/admin/calls` |
 |---|---|---|
 | `openai` em `error_500` | F1 `200` em 5,5 s | `gpt-fake-large:500` ×3 e depois `claude-fake-large:200` |
+| `openai` em `error_429` | F1 `200` em 6,2 s | `gpt-fake-large:429` ×2 e depois `claude-fake-large:200` |
+| Os dois `large` em `error_429`, com 2 retries em `429` (antes) | F1 `503` em 14,3 s: o prazo da F1 acabou antes de o gateway chegar ao `mini`; F4 `503` em 13,9 s | `gpt-fake-large:429` ×3, `claude-fake-large:429` ×3, e nenhuma chamada ao `mini` |
+| Os dois `large` em `error_429`, com 1 retry (agora) | F1 `200` em 9,9 s, pelo `mini`; F4 `503` em 9,5 s; 1º trecho da F2 em 9,9 s; F3 `303` aos 12,2 s | `429` ×2 em cada `large` e depois o `mini` (na F4, nenhuma chamada ao `mini`) |
 | `openai` em `timeout` | F1 `200` em 6,3 s; F4 `200` em 6,2 s | `gpt-fake-large:504` 1 vez e depois `claude-fake-large:200`. Não houve retry. O `504` é o status que o provider vai devolver ao fim dos 300 s; o `/admin/calls` o registra já no recebimento, mas o gateway desistiu em 5 s |
 | Normal | F1 `200` em ~1,1 s | `gpt-fake-large:200` |
 | Entrada de ~16 mil tokens (contexto de 8.000) | gateway `400`; pela borda, F1 `422` | 1 chamada `400` em cada destino (`gpt-fake-large`, `claude-fake-large`, `gpt-fake-mini`) |

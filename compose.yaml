@@ -44,8 +44,9 @@ services:
     healthcheck:
       # Saudável só depois que as chaves virtuais foram aplicadas.
       test: ["CMD", "python", "-c", "import os, urllib.request; assert os.path.exists('/tmp/keys-ready'); urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')"]
-      # A primeira subida cria o schema do banco (migrações do Prisma): até 5 min de folga.
-      start_period: 300s
+      # A primeira subida cria o schema do banco (migrações do Prisma, ~1 a 2,5 min nesta máquina):
+      # até 10 min de folga, o mesmo prazo que o bootstrap_keys.py espera (READY_TIMEOUT).
+      start_period: 600s
       interval: 3s
       timeout: 3s
       retries: 20

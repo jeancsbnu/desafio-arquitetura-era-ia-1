@@ -1,6 +1,10 @@
 """Aplica as chaves virtuais declaradas em keys.yaml e aquece o gateway, assim que ele fica pronto.
 
-Roda dentro do container do gateway, em paralelo ao LiteLLM (ver start.sh):
+Roda dentro do container do gateway, em paralelo ao LiteLLM (ver start.sh). Primeiro espera o
+gateway responder pronto, com o banco conectado: na 1ª subida, o LiteLLM aplica as migrações do
+banco antes de abrir a porta, o que levou de ~1 a 2,5 min na máquina de desenvolvimento,
+conforme a carga. A espera vai até READY_TIMEOUT (10 min, o mesmo `start_period` do healthcheck
+em compose.yaml), com folga para uma máquina bem mais lenta. Depois:
 1. para cada chave: cria se não existir, atualiza os limites se já existir;
 2. aquece o gateway: a 1ª chamada real de um processo do LiteLLM paga uma inicialização única
    (medida entre ~0,5 e 3,7 s a mais que uma chamada normal), qualquer que seja o destino. O
@@ -14,13 +18,14 @@ Roda dentro do container do gateway, em paralelo ao LiteLLM (ver start.sh):
    chamar `gateway-warmup` dá erro;
 3. grava /tmp/keys-ready, que o healthcheck do serviço exige: o gateway só fica saudável depois.
    O arquivo é gravado mesmo que o aquecimento termine com qualquer exceção. Já uma falha no passo
-   1 (HTTP ou de rede) interrompe a subida de propósito: sem as chaves o app não funciona, o
-   gateway fica `unhealthy` e o `docker compose up --wait` falha de forma visível; reiniciar o
-   gateway tenta de novo.
+   1 (HTTP ou de rede), ou o gateway que não fica pronto no prazo, interrompe a subida de
+   propósito: sem as chaves o app não funciona, o gateway fica `unhealthy` e o
+   `docker compose up --wait` falha de forma visível; reiniciar o gateway tenta de novo.
 
-Os cenários de falha do aquecimento são testados em tests/gateway/test_warmup.py.
+A espera e os cenários de falha do aquecimento são testados em tests/gateway/test_warmup.py.
 """
 
+import http.client
 import json
 import os
 import sys
@@ -39,6 +44,7 @@ READY_FILE = "/tmp/keys-ready"
 LIMIT_FIELDS = ("models", "max_budget", "budget_duration", "rpm_limit")
 WARMUP_PORT = 4099  # o mesmo de `gateway-warmup` em config.yaml
 CALL_TIMEOUT = 10  # segundos sem resposta do gateway (na conexão e em cada leitura)
+READY_TIMEOUT = 600  # segundos até o gateway ficar pronto; o `start_period` do healthcheck
 
 
 def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
@@ -57,15 +63,19 @@ def resolve(value: str) -> str:
 
 
 def wait_ready() -> None:
-    for _ in range(180):
+    """Espera por prazo, e não por número de tentativas: cada tentativa leva de ~1 s (porta ainda
+    fechada) a ~11 s (porta aberta e sem resposta). Enquanto o gateway sobe, qualquer resposta que
+    não seja `pronto` (conexão recusada, corpo vazio ou inválido, conexão cortada) é só esperar."""
+    deadline = time.monotonic() + READY_TIMEOUT
+    while time.monotonic() < deadline:
         try:
             status, body = call("GET", "/health/readiness")
-            if status == 200 and body.get("db") == "connected":
+            if status == 200 and isinstance(body, dict) and body.get("db") == "connected":
                 return
-        except (urllib.error.URLError, ConnectionError, TimeoutError):
+        except (OSError, ValueError, http.client.HTTPException):
             pass
         time.sleep(1)
-    sys.exit("gateway não ficou pronto com o banco conectado")
+    sys.exit(f"gateway não ficou pronto com o banco conectado em {READY_TIMEOUT} s")
 
 
 def apply_keys() -> None:

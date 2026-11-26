@@ -54,11 +54,13 @@ O comportamento implementado foi conferido pela borda, com `/admin/calls`.
 
 **Provider primário inteiro em `error_500`** (`{"provider": "openai", "mode": "error_500"}`). F1 e F4 respondem `200`, e o `/admin/calls` registra `gpt-fake-large:500` 3 vezes e depois `claude-fake-large:200`. Com o `anthropic` fora, o mesmo acontece com F2 e F3, invertendo os providers.
 
-**Os dois `large` em `error_500`** (`{"provider": "openai", "model": "gpt-fake-large", "mode": "error_500"}` e `{"provider": "anthropic", "model": "claude-fake-large", "mode": "error_500"}`). Medido no requisito 5, quando F2 e F3 ainda eram síncronas. Depois do requisito 6, a F2 faz o streaming do `mini` até o `event: end`, e a tarefa da F3 chega a `303`. O teste `test_without_large_models_each_feature_follows_the_fallback_table`, em `tests/flows/`, confere as quatro linhas no modo atual.
+**Os dois `large` em `error_500`** (`{"provider": "openai", "model": "gpt-fake-large", "mode": "error_500"}` e `{"provider": "anthropic", "model": "claude-fake-large", "mode": "error_500"}`). Medido pela borda no modo atual de cada feature (ADR 0008). O teste `test_without_large_models_each_feature_follows_the_fallback_table`, em `tests/flows/`, confere as quatro linhas.
 
 | Feature | Resposta | `/admin/calls` |
 |---|---|---|
-| F1 | `200` em 10,2 s | 3× `gpt-fake-large:500`, 3× `claude-fake-large:500`, `gpt-fake-mini:200` |
-| F2 | `200` em 12,0 s | 3× `claude-fake-large:500`, 3× `gpt-fake-large:500`, `claude-fake-mini:200` |
-| F3 (1 dia) | `200` em 12,8 s | 3× `claude-fake-large:500`, 3× `gpt-fake-large:500`, `claude-fake-mini:200` |
-| F4 | `503` em 9,5 s | 3× `gpt-fake-large:500`, 3× `claude-fake-large:500`, nenhuma chamada ao `mini` |
+| F1 | `200` em 9,1 s (10,2 s numa amostra anterior) | 3× `gpt-fake-large:500`, 3× `claude-fake-large:500`, `gpt-fake-mini:200` |
+| F2 | stream `200` completo: 1º trecho em 11,8 s e `event: end` em 14,3 s | 3× `claude-fake-large:500`, 3× `gpt-fake-large:500`, `claude-fake-mini:200` |
+| F3 (1 dia) | `202` em 0,05 s; a URL de status responde `303` aos 13,2 s, e o relatório sai do `mini` | 3× `claude-fake-large:500`, 3× `gpt-fake-large:500`, `claude-fake-mini:200` |
+| F4 | `503` em 10,0 s (9,5 s numa amostra anterior) | 3× `gpt-fake-large:500`, 3× `claude-fake-large:500`, nenhuma chamada ao `mini` |
+
+Com os dois `large` em `error_429`, o resultado de cada feature é o mesmo, com 2 tentativas em cada `large` em vez de 3 (ADR 0005).

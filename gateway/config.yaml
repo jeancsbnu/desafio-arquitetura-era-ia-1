@@ -83,7 +83,7 @@ model_list:
   # completo do gateway (cliente HTTP, resposta, custo, registro de gasto) sem chegar ao provider e
   # sem aparecer em /admin/calls; no registro de gasto do gateway fica uma linha de custo 0 por
   # subida. A aplicação não o alcança (a chave dela só vê as 4 capacidades). Herda as tentativas
-  # globais, que só repetem em 5xx ou 429: o servidor local responde 200 na hora, então não há
+  # globais, que só repetem em 5xx e 429: o servidor local responde 200 na hora, então não há
   # repetição; se algo der errado, o bootstrap registra a falha no log (desiste depois de 10 s
   # sem resposta) e a subida segue. Depois da subida o servidor local não existe mais, e chamar
   # este destino dá erro.
@@ -103,13 +103,15 @@ router_settings:
     - reply-suggestion: [reply-suggestion-fallback, reply-suggestion-weak]
     - topics-report: [topics-report-fallback, topics-report-weak]
     - order-extraction: [order-extraction-fallback]
-  # Tentativas por destino: falhas transitórias (5xx e 429) têm 1 + 2 retries, com backoff
-  # exponencial; timeout não tem retry (vai direto ao próximo destino). Demais erros (4xx): sem
-  # retry, mas o LiteLLM ainda passa pelos destinos seguintes da lista de fallbacks.
+  # Tentativas por destino: 5xx tem 1 + 2 retries, com backoff exponencial; 429 tem 1 + 1 retry,
+  # e o LiteLLM espera o `Retry-After` do provider antes de repetir (2 s no provider simulado).
+  # Com 2 retries em 429, os dois `large` limitados levavam a F1 a 14 s, o prazo do app, antes de
+  # chegar ao modelo fraco. Timeout não tem retry (vai direto ao próximo destino). Demais erros
+  # (4xx): sem retry, mas o LiteLLM ainda passa pelos destinos seguintes da lista de fallbacks.
   num_retries: 2
   retry_policy:
     InternalServerErrorRetries: 2
-    RateLimitErrorRetries: 2
+    RateLimitErrorRetries: 1
     TimeoutErrorRetries: 0
     BadRequestErrorRetries: 0
     AuthenticationErrorRetries: 0
