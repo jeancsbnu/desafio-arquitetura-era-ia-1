@@ -7,9 +7,16 @@ Roda dentro do container do gateway, em paralelo ao LiteLLM (ver start.sh):
    bootstrap sobe por alguns segundos um servidor local que responde no formato da OpenAI e chama
    o destino `gateway-warmup` (config.yaml), que aponta para ele: a inicialização acontece aqui, e
    não na 1ª requisição de um cliente, sem chegar ao provider e sem nada em /admin/calls. É uma
-   otimização: qualquer falha nela é registrada no log e a subida segue;
+   otimização: qualquer falha nela é registrada no log e a subida segue, com no máximo
+   CALL_TIMEOUT (10 s) de atraso. Depois da subida o servidor local não existe mais, e chamar
+   `gateway-warmup` dá erro;
 3. grava /tmp/keys-ready, que o healthcheck do serviço exige: o gateway só fica saudável depois.
-   Sem as chaves o app não funciona, então uma falha no passo 1 interrompe a subida.
+   O arquivo é gravado mesmo que o aquecimento termine com qualquer exceção. Já uma falha no passo
+   1 (HTTP ou de rede) interrompe a subida de propósito: sem as chaves o app não funciona, o
+   gateway fica `unhealthy` e o `docker compose up --wait` falha de forma visível; reiniciar o
+   gateway tenta de novo.
+
+Os cenários de falha do aquecimento são testados em tests/gateway/test_warmup.py.
 """
 
 import json
@@ -29,6 +36,7 @@ KEYS_FILE = "/gateway/keys.yaml"
 READY_FILE = "/tmp/keys-ready"
 LIMIT_FIELDS = ("models", "max_budget", "budget_duration", "rpm_limit")
 WARMUP_PORT = 4099  # o mesmo de `gateway-warmup` em config.yaml
+CALL_TIMEOUT = 10  # segundos por chamada ao gateway
 
 
 def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
@@ -36,7 +44,7 @@ def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
         BASE + path, method=method, data=json.dumps(body).encode() if body is not None else None,
         headers={"Authorization": f"Bearer {MASTER_KEY}", "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(request, timeout=CALL_TIMEOUT) as response:
             return response.status, json.load(response)
     except urllib.error.HTTPError as error:
         return error.code, {}
@@ -102,12 +110,16 @@ class _CompletionStub(BaseHTTPRequestHandler):
 
 
 def warm_up() -> None:
-    """Otimização: nunca levanta exceção. Se algo falhar (inclusive a porta local ocupada), só
-    registra no log, e o gateway sobe do mesmo jeito, com a 1ª chamada mais lenta."""
+    """Otimização: não levanta `Exception`. Se algo falhar (porta local ocupada, gateway
+    inacessível ou sem resposta, resposta inválida), só registra no log, e o gateway sobe do mesmo
+    jeito, com a 1ª chamada mais lenta. `main()` grava o arquivo de pronto mesmo diante de uma
+    `BaseException` daqui."""
     server = None
+    serving = False
     try:
         server = ThreadingHTTPServer(("127.0.0.1", WARMUP_PORT), _CompletionStub)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        serving = True
         start = time.perf_counter()
         status, _ = call("POST", "/chat/completions", {
             "model": "gateway-warmup", "messages": [{"role": "user", "content": "aquecimento"}],
@@ -117,16 +129,19 @@ def warm_up() -> None:
         print(f"[bootstrap_keys] aquecimento falhou ({type(error).__name__}: {error}); seguindo sem ele",
               flush=True)
     finally:
-        if server is not None:
+        if serving:  # shutdown() espera o serve_forever: só se a thread chegou a iniciar
             server.shutdown()
+        if server is not None:
             server.server_close()
 
 
 def main() -> None:
     wait_ready()
     apply_keys()
-    warm_up()
-    open(READY_FILE, "w").close()
+    try:
+        warm_up()
+    finally:
+        open(READY_FILE, "w").close()
 
 
 if __name__ == "__main__":

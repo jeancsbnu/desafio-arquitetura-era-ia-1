@@ -217,13 +217,14 @@ A 1ª chamada real de um processo do gateway paga uma inicialização única do 
 - **o `gateway`** (`gateway/bootstrap_keys.py`) sobe por alguns segundos um servidor local, dentro do próprio container, que responde no formato da OpenAI. Em seguida, chama o destino interno `gateway-warmup`, que aponta para esse servidor.
   - A chamada percorre o caminho completo do gateway sem chegar ao provider e sem nada em `/admin/calls`. No registro de gasto do próprio gateway, ela deixa uma linha de custo 0 por subida, feita com a master key.
   - O `gateway-warmup` aparece em `/models` só para a master key; a chave do app não o vê.
-  - O aquecimento é uma otimização: se falhar, inclusive com a porta local ocupada, só fica registrado no log, e o gateway sobe do mesmo jeito.
+  - O aquecimento é uma otimização. Se falhar (porta local ocupada, gateway inacessível ou sem resposta, resposta inválida), só fica registrado no log, e o gateway sobe do mesmo jeito, com no máximo 10 s de atraso. Os testes estão em `tests/gateway/test_warmup.py`.
+  - Depois da subida o servidor local não existe mais, e chamar `gateway-warmup` dá erro.
 
 Medido pela borda. Uma chamada normal da F1 leva ~1,1 s, e a 1ª chamada sem aquecimento levava de ~0,5 a 3,7 s a mais:
 
 | Situação | 1ª F1, sem o aquecimento do gateway | 1ª F1, com o aquecimento | 1º trecho da 1ª F2, com o aquecimento |
 |---|---|---|---|
-| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2 amostras); 2,74 s logo depois de ligar a máquina | 1,14 s | 0,93 s |
+| `docker compose down` + `up -d --wait` | 1,55 a 1,60 s (2 amostras); 2,74 s logo depois de ligar a máquina | 1,14 / 1,24 / 1,32 s (3 subidas do zero, a última num clone limpo do GitHub) | 0,93 / 1,04 s |
 | Só o `gateway` reiniciado | 1,64 / 1,72 / 2,28 / 2,28 / **4,76 s** (5 amostras minhas); 1,7 a 2,8 s (5 amostras da revisão independente) | 1,12 / 1,15 / 1,17 s (3 amostras) | — |
 | Só o `app` reiniciado | 1,12 s (minha amostra); 1,25 a 1,67 s (3 amostras da revisão independente) | não muda: o aquecimento do gateway não age no restart do app | 0,85 a 0,93 s |
 | Chamadas seguintes | F1 ~1,1 s; F2 ~0,9 s | igual | igual |
@@ -264,6 +265,14 @@ Ela usa os mesmos requisitos da suíte de caracterização e limpa o `/admin/cal
 ```sh
 python -m pytest tests/flows                  # ~9 min, com o relatório do mês inteiro
 python -m pytest tests/flows -m "not slow"    # ~2 min, sem ele
+```
+
+### Testes do aquecimento do gateway
+
+`tests/gateway/test_warmup.py` testa, sem Docker, que o aquecimento do gateway (ver "A primeira chamada depois da subida") nunca impede a subida. São 7 testes: o caminho normal e cada cenário de falha.
+
+```sh
+python -m pytest tests/gateway    # ~5 s
 ```
 
 A suíte de caracterização detecta a troca de um `large` por um `mini` em F2 e F4. Com o `mini`, a sugestão da F2 muda, e 5 dos 7 tickets do dataset da F4 dão outro resultado: por exemplo, o `TK-00002` devolve a nota fiscal `#530720` no lugar do pedido. Em F1 e F3, o `mini` dá a mesma saída (ver "Evidência: modelos `large` × `mini`").
